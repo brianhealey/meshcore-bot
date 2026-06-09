@@ -35,6 +35,7 @@ from ..commands.rain_command import (
     decide_rain_notification,
     episode_probability_temp,
     fetch_precip_series,
+    fetch_precip_series_nws,
     format_amount_estimate,
     join_location,
     precip_descriptor,
@@ -836,18 +837,33 @@ class WeatherService(BaseServicePlugin):
         """Fetch the precip nowcast for the bot's position and push if rain is incoming."""
         try:
             loop = asyncio.get_event_loop()
+            # Prefer the NWS gridpoint (forecaster-adjusted QPF + PoP — it captures
+            # the convection the Open-Meteo model smooths away, which is why this
+            # push could stay silent during real rain). Fall back to Open-Meteo when
+            # NWS has no coverage (non-US) or the request fails.
             series = await loop.run_in_executor(
                 None,
-                lambda: fetch_precip_series(
+                lambda: fetch_precip_series_nws(
                     self.api_session,
                     self.my_position_lat,
                     self.my_position_lon,
-                    weather_model=self.weather_model or "",
                     timeout=10,
                     logger=self.logger,
                     cache_ttl=self.rain_nowcast_cache_seconds,
                 ),
             )
+            if not series:
+                series = await loop.run_in_executor(
+                    None,
+                    lambda: fetch_precip_series(
+                        self.api_session,
+                        self.my_position_lat,
+                        self.my_position_lon,
+                        weather_model=self.weather_model or "",
+                        timeout=10,
+                        logger=self.logger,
+                    ),
+                )
             if not series:
                 return
 
