@@ -14,6 +14,7 @@
     "hfcond": ["hfcond", "hf"],
     "satpass": ["satpass"],
     "sports": ["sports", "score", "scores"],
+    "worldcup": ["wc", "worldcup"],
     "stats": ["stats"],
     "channels": ["channels", "channel"],
     "path": ["path", "decode", "route"],
@@ -162,6 +163,17 @@
       "no_games_league": "No games found for {sport}",
       "no_games_team": "No games found for {team}",
       "team_not_found": "Team/League '{team}' not found. Try: seahawks, mariners, sounders, kraken, storm, chiefs, lfc, mlb, nfl, mls, wnba, epl, etc."
+    },
+    "worldcup": {
+      "description": "FIFA World Cup scores, standings & nation results (in-season only)",
+      "help": "World Cup scores. Use 'wc' for today's games, 'wc group [A-L]' for standings, or 'wc [nation]' for a team's matches.",
+      "not_in_season": "No World Cup is currently in progress.",
+      "no_games_today": "No World Cup games today.",
+      "no_games_nation": "No World Cup matches found for {nation}.",
+      "groups_list": "World Cup groups: {groups}. Try 'wc group A'.",
+      "group_not_found": "Group '{group}' not found. Try a group letter, e.g. 'wc group A'.",
+      "nation_not_found": "Nation '{nation}' not found in the current World Cup.",
+      "error_fetching": "Error fetching World Cup data"
     },
     "stats": {
       "description": "Show statistics for past 24 hours. Use 'stats messages', 'stats channels', 'stats paths', or 'stats adverts' for specific stats.",

@@ -840,6 +840,22 @@ channel_override = #sounders=sounders,#seahawks=seahawks,#kraken=kraken,#mariner
 # ESPN API timeout in seconds
 api_timeout = 10
 
+[Worldcup_Command]
+# Enable or disable the World Cup command (true/false)
+# Commands: wc / worldcup
+# This command only responds while a FIFA World Cup (men's or women's) is actually
+# in progress. The active tournament is auto-detected from the ESPN schedule, so no
+# dates need to be configured; outside a tournament it replies that none is in progress.
+# World Cup scores are also available year-round via the sports command (e.g. "sports fifa").
+enabled = true
+
+# ESPN API timeout in seconds
+api_timeout = 10
+
+# How long (in minutes) to cache season detection and nation roster lookups,
+# to avoid repeated ESPN requests. Default: 360 (6 hours).
+cache_ttl_minutes = 360
+
 [Stats_Command]
 # Enable or disable the stats command (true/false)
 enabled = true
@@ -1852,6 +1868,57 @@ maxlongitude = -114.0
 # When true: notification message then link-only message. When false: no link sent.
 # Default: true
 send_link = true
+
+[Worldcup_Service]
+# Live FIFA World Cup score updates posted to a channel (true/false).
+# Posts proactive messages as matches progress, e.g.:
+#   Group E: Côte d'Ivoire 0, Ecuador 0 (half-time)
+# Only runs while a World Cup (men's or women's) is in progress; the active tournament
+# is auto-detected from the ESPN calendar, so no dates need to be configured. When no
+# tournament is active the service idles. Pairs with the wc/worldcup command.
+enabled = false
+
+# Optional regional TC_FLOOD scope for mesh channel posts from this service.
+# flood_scope = #west
+
+# Channel to post live updates to
+channel = #general
+
+# Poll interval (milliseconds) while a tournament is active but no match is in progress
+# (waiting for the next kick-off). Default: 60000 (1 minute)
+poll_interval = 60000
+
+# Faster poll interval (milliseconds) used while at least one match is LIVE, for timelier
+# goal/half-time/full-time updates. ESPN's scoreboard is edge-cached ~15-20s, so polling
+# faster than that yields no fresher data. Default: 20000 (20 seconds)
+live_poll_interval = 20000
+
+# Idle interval (seconds) used when no tournament is in progress. Default: 1800 (30 min)
+idle_interval = 1800
+
+# Which match events to announce (each true/false)
+announce_kickoff = true
+announce_goals = true
+announce_halftime = true
+announce_fulltime = true
+
+# Send only to external targets (Discord/Telegram) and skip mesh channel posts (true/false).
+# Default: false
+silence_mesh_output = false
+
+# EXPERIMENTAL: use ESPN's "fastcast" WebSocket push for near-real-time updates instead of
+# relying solely on the poll interval (true/false). When on, a push wakes the service to
+# re-check scores immediately (with a cache-busting request); REST polling above continues
+# as a heartbeat/fallback, so this can only make updates faster, never break them.
+# This is a reverse-engineered, undocumented ESPN protocol and may stop working without
+# notice. Leave false unless you are testing it. Default: false
+use_fastcast = false
+# Optional override for the fastcast topic to subscribe to. Leave blank to use the default
+# derived from the men's tournament. The topic format is undocumented and may need tuning.
+# fastcast_topic =
+
+# ESPN API timeout in seconds
+api_timeout = 10
 
 [Rate_Limits]
 # Per-channel rate limiting: minimum seconds between bot messages on a specific channel.
