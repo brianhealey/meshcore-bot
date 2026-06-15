@@ -62,6 +62,12 @@ def build_service(series, monkeypatch, *, overrides=None):
     service._cached_rain_location = "Nashville, TN"
     # get_mesh_flood_scope lazily imports heavy deps; stub it.
     service.get_mesh_flood_scope = Mock(return_value=None)
+    # NWS gridpoint is tried first now; return None ("no coverage") so these
+    # source-agnostic nowcast-logic tests run on the canned Open-Meteo series.
+    monkeypatch.setattr(
+        "modules.service_plugins.weather_service.fetch_precip_series_nws",
+        lambda *a, **k: None,
+    )
     monkeypatch.setattr(
         "modules.service_plugins.weather_service.fetch_precip_series",
         lambda *a, **k: series,
