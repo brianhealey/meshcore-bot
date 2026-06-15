@@ -486,6 +486,7 @@ def fetch_precip_series_nws(
     timeout: int = 10,
     logger: Any = None,
     pop_floor: int = 50,
+    cache_ttl: float = 0.0,
 ) -> Optional[dict]:
     """Build a precip nowcast series from the NWS gridpoint forecast (US only).
 
@@ -499,7 +500,16 @@ def fetch_precip_series_nws(
     probability rather than snapping to coarse 6-hour QPF boundaries, and a trace
     of QPF at a low chance is not reported as rain. Times are naive UTC ISO strings
     (they only need to be self-consistent: the nowcast works on relative minutes).
+
+    When cache_ttl > 0, a fresh prior result for the same rounded location is reused
+    (shared bounded cache with fetch_precip_series).
     """
+    cache_key = (round(lat, 2), round(lon, 2), "nws")
+    if cache_ttl > 0:
+        hit = _SERIES_CACHE.get(cache_key)
+        if hit is not None and (time.time() - hit[0]) < cache_ttl:
+            return hit[1]
+
     headers = {"User-Agent": "(meshcore-bot, weather-nowcast)", "Accept": "application/geo+json"}
     try:
         pts = session.get(
@@ -547,7 +557,7 @@ def fetch_precip_series_nws(
         precip.append(amt)
         codes.append(_nws_weather_code(wx.get(h)) if amt else None)
 
-    return {
+    result = {
         "times": times,
         "precip": precip,
         "codes": codes,
@@ -556,6 +566,11 @@ def fetch_precip_series_nws(
         "current_code": codes[0] if codes else None,
         "step": 60,
     }
+    if cache_ttl > 0:
+        if len(_SERIES_CACHE) >= _SERIES_CACHE_CAP:
+            _SERIES_CACHE.pop(next(iter(_SERIES_CACHE)))
+        _SERIES_CACHE[cache_key] = (time.time(), result)
+    return result
 
 
 @dataclass

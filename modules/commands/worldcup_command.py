@@ -15,7 +15,7 @@ World Cup data is also reachable year-round through the `sports` command
 front end with live scores, standings, and nation lookups.
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ..clients.espn_client import ESPNClient
 from ..clients.sports_mappings import SPORT_EMOJIS
@@ -50,8 +50,6 @@ class WorldCupCommand(BaseCommand):
         {"name": "nation", "description": "A nation's matches (e.g. brazil, usa)"},
     ]
 
-    espn_client: Optional[ESPNClient] = None
-
     def __init__(self, bot: "MeshCoreBot"):
         """Initialize the World Cup command with an ESPN client and data helper."""
         super().__init__(bot)
@@ -62,7 +60,7 @@ class WorldCupCommand(BaseCommand):
 
         cache_ttl_minutes = self.get_config_value("Worldcup_Command", "cache_ttl_minutes", fallback=360, value_type="int")
 
-        self.espn_client = ESPNClient(logger=self.logger, timeout=self.url_timeout)
+        self.espn_client: ESPNClient = ESPNClient(logger=self.logger, timeout=self.url_timeout)
         self.wc_data = WorldCupData(self.espn_client, logger=self.logger, cache_ttl=cache_ttl_minutes * 60)
 
     def matches_keyword(self, message: MeshMessage) -> bool:

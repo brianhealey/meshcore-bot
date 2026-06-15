@@ -75,6 +75,78 @@ def build_service(series, monkeypatch, *, overrides=None):
     return service, sends
 
 
+# --- NWS path (WeatherService passes cache_ttl) ------------------------------
+
+def test_nws_path_accepts_cache_ttl_without_crashing(monkeypatch):
+    """Proactive poll calls fetch_precip_series_nws(..., cache_ttl=...); must not TypeError."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    base = now.replace(minute=0, second=0, microsecond=0)
+    nws_series = {
+        "times": [(base + timedelta(hours=i)).isoformat(timespec="minutes") for i in range(3)],
+        "precip": [0.0, 0.5, 0.5],
+        "codes": [None, 61, 61],
+        "now": now.isoformat(timespec="minutes"),
+        "current_precip": 0.0,
+        "current_code": None,
+        "step": 60,
+    }
+    nws_kwargs: list[dict] = []
+    open_meteo_called: list[bool] = []
+
+    def fake_nws(*_a, **kwargs):
+        nws_kwargs.append(kwargs)
+        return nws_series
+
+    def fake_open_meteo(*_a, **_k):
+        open_meteo_called.append(True)
+        return None
+
+    cfg = configparser.ConfigParser()
+    cfg.add_section("Weather")
+    cfg.add_section("Weather_Service")
+    cfg.set("Weather_Service", "my_position_lat", "36.16")
+    cfg.set("Weather_Service", "my_position_lon", "-86.78")
+    cfg.set("Weather_Service", "rain_nowcast_enabled", "true")
+    cfg.set("Weather_Service", "rain_channel", "weather")
+    cfg.set("Weather_Service", "rain_nowcast_cache_seconds", "300")
+
+    bot = Mock()
+    bot.logger = Mock()
+    bot.config = cfg
+    bot.db_manager = Mock()
+
+    sends: list[tuple[str, str]] = []
+
+    async def _send(channel, text, **kwargs):
+        sends.append((channel, text))
+        return True
+
+    bot.command_manager.send_channel_message = _send
+
+    monkeypatch.setattr(
+        "modules.service_plugins.weather_service.fetch_precip_series_nws", fake_nws
+    )
+    monkeypatch.setattr(
+        "modules.service_plugins.weather_service.fetch_precip_series", fake_open_meteo
+    )
+
+    service = WeatherService(bot)
+    service.api_session = Mock()
+    service._cached_rain_location = "Nashville, TN"
+    service.get_mesh_flood_scope = Mock(return_value=None)
+
+    asyncio.run(service._check_rain_nowcast())
+
+    assert nws_kwargs, "NWS fetch should have been tried"
+    assert nws_kwargs[0].get("cache_ttl") == 300
+    assert open_meteo_called == [], "Open-Meteo fallback should not run when NWS succeeds"
+    assert len(sends) == 1
+    assert "Heads up" in sends[0][1]
+    bot.logger.error.assert_not_called()
+
+
 # --- probability gate -------------------------------------------------------
 
 def test_incoming_above_threshold_pushes(monkeypatch):

@@ -105,9 +105,9 @@ class WorldCupFastcastClient:
 
     async def _connect_once(self) -> None:
         headers = {"Origin": ORIGIN, "User-Agent": USER_AGENT}
-        async with aiohttp.ClientSession(headers=headers) as session:
-            timeout = aiohttp.ClientTimeout(total=self.connect_timeout)
-            async with session.get(WEBSOCKET_HOST_URL, timeout=timeout) as resp:
+        timeout = aiohttp.ClientTimeout(total=self.connect_timeout)
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            async with session.get(WEBSOCKET_HOST_URL) as resp:
                 resp.raise_for_status()
                 host = await resp.json()
 
@@ -117,7 +117,7 @@ class WorldCupFastcastClient:
                 raise ValueError("fastcast websockethost returned no ip")
 
             url = f"wss://{ip}:{port}/FastcastService/pubsub/profiles/{self.profile}?TrafficId={uuid.uuid4()}"
-            async with session.ws_connect(url, timeout=self.connect_timeout, heartbeat=25, origin=ORIGIN) as ws:
+            async with session.ws_connect(url, heartbeat=25, origin=ORIGIN) as ws:
                 self.logger.info("Fastcast connected (topic=%s)", self.topic)
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
