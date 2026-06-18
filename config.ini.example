@@ -1899,6 +1899,10 @@ idle_interval = 1800
 # Which match events to announce (each true/false)
 announce_kickoff = true
 announce_goals = true
+# Post a follow-up when a previously-announced goal is overturned by VAR (the score is
+# rescinded), e.g. "Group J: Argentina 0, Algeria 0 — 60' Lionel Messi ruled out (VAR)".
+# Detected from the score being reverted; requires announce_goals = true.
+announce_disallowed = true
 announce_halftime = true
 announce_fulltime = true
 

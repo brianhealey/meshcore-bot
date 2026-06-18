@@ -86,7 +86,8 @@ def test_specific_known_sinks_are_escaped(template_source: str) -> None:
     assert "${this.escapeHtml(contact.username || 'Unknown')}" in template_source
     assert "${this.escapeHtml(s.name)}" in template_source
     # raw advert JSON blob is HTML-escaped before landing in the <pre>
-    assert "this.escapeHtml(JSON.stringify(contact.raw_advert_data_parsed" in template_source
+    # (advert data is fetched on demand into `advertData` via /api/contact-detail)
+    assert "this.escapeHtml(JSON.stringify(advertData" in template_source
     # the raw (unescaped) forms must be gone
     assert "${contact.username || 'Unknown'}" not in template_source
     assert "`<em>${s.name}</em>`" not in template_source

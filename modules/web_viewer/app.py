@@ -445,780 +445,30 @@ class BotDataViewer:
             conn.close()
 
     def _resolve_path(self, path_input: str) -> dict[str, Any]:
-        """Resolve a hex path to repeater names and locations using the same algorithm as PathCommand.
+        """Resolve a hex path to repeater names/locations for the mesh map.
 
-        This method replicates the path command's logic to ensure consistency between
-        the bot's path command and the web viewer's path resolution.
-
-        Args:
-            path_input: Hex path string (e.g., "7e,01,86" or "7e 01 86")
-
-        Returns:
-            Dictionary with node_ids, repeaters list, and valid flag
+        Thin wrapper over the shared engine (modules.path_inference.decode_path_nodes). Previously
+        this duplicated the decode logic and crashed ("must be real number, not NoneType") on
+        repeaters without coordinates; the shared engine guards that.
         """
-        import math
-        import re
-        from datetime import datetime
-
-        # Check if db_manager is available
-        if not hasattr(self, 'db_manager') or not self.db_manager:
-            return {
-                'node_ids': [],
-                'repeaters': [],
-                'valid': False,
-                'error': 'Database manager not initialized'
-            }
-
-        # Parse hex input - same logic as PathCommand._decode_path
-        # Handle both comma/space-separated and continuous hex strings (e.g., "8601a5")
-        prefix_hex_chars = self.config.getint('Bot', 'prefix_bytes', fallback=1) * 2
-        if prefix_hex_chars <= 0:
-            prefix_hex_chars = 2
-        # First, try to parse as continuous hex string
-        path_input_clean = path_input.replace(',', '').replace(':', '').replace(' ', '')
-        if re.match(r'^[0-9a-fA-F]{4,}$', path_input_clean):
-            # Continuous hex string - split using configured prefix length
-            hex_matches = [path_input_clean[i:i+prefix_hex_chars] for i in range(0, len(path_input_clean), prefix_hex_chars)]
-            if (len(path_input_clean) % prefix_hex_chars) != 0 and prefix_hex_chars > 2:
-                hex_matches = [path_input_clean[i:i+2] for i in range(0, len(path_input_clean), 2)]
-        else:
-            # Space/comma-separated format
-            path_input = path_input.replace(',', ' ').replace(':', ' ')
-            hex_pattern = rf'[0-9a-fA-F]{{{prefix_hex_chars}}}'
-            hex_matches = re.findall(hex_pattern, path_input)
-            if not hex_matches and prefix_hex_chars > 2:
-                hex_pattern = r'[0-9a-fA-F]{2}'
-                hex_matches = re.findall(hex_pattern, path_input)
-
-        if not hex_matches:
-            return {
-                'node_ids': [],
-                'repeaters': [],
-                'valid': False,
-                'error': 'No valid hex values found'
-            }
-
-        node_ids = [match.upper() for match in hex_matches]
-
-        # Load all Path_Command config values (same as PathCommand.__init__)
-        # Geographic guessing
-        geographic_guessing_enabled = False
-        bot_latitude = None
-        bot_longitude = None
-
-        try:
-            if self.config.has_section('Bot'):
-                lat = self.config.getfloat('Bot', 'bot_latitude', fallback=None)
-                lon = self.config.getfloat('Bot', 'bot_longitude', fallback=None)
-                if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
-                    bot_latitude = lat
-                    bot_longitude = lon
-                    geographic_guessing_enabled = True
-        except (ValueError, configparser.Error):  # malformed float or missing section
-            pass
-
-        # Path command settings
-        proximity_method = self.config.get('Path_Command', 'proximity_method', fallback='simple')
-        self.config.getboolean('Path_Command', 'path_proximity_fallback', fallback=True)
-        max_proximity_range = self.config.getfloat('Path_Command', 'max_proximity_range', fallback=200.0)
-        max_repeater_age_days = self.config.getint('Path_Command', 'max_repeater_age_days', fallback=14)
-
-        recency_weight = self.config.getfloat('Path_Command', 'recency_weight', fallback=0.4)
-        recency_weight = max(0.0, min(1.0, recency_weight))
-        proximity_weight = 1.0 - recency_weight
-
-        recency_decay_half_life_hours = self.config.getfloat('Path_Command', 'recency_decay_half_life_hours', fallback=12.0)
-
-        # Check for preset first, then apply individual settings (preset can be overridden)
-        preset = self.config.get('Path_Command', 'path_selection_preset', fallback='balanced').lower()
-
-        # Apply preset defaults, then individual settings override
-        if preset == 'geographic':
-            preset_graph_confidence_threshold = 0.5
-            preset_distance_threshold = 30.0
-            preset_distance_penalty = 0.5
-            preset_final_hop_weight = 0.4
-        elif preset == 'graph':
-            preset_graph_confidence_threshold = 0.9
-            preset_distance_threshold = 50.0
-            preset_distance_penalty = 0.2
-            preset_final_hop_weight = 0.15
-        else:  # 'balanced' (default)
-            preset_graph_confidence_threshold = 0.7
-            preset_distance_threshold = 30.0
-            preset_distance_penalty = 0.3
-            preset_final_hop_weight = 0.25
-
-        graph_based_validation = self.config.getboolean('Path_Command', 'graph_based_validation', fallback=True)
-        min_edge_observations = self.config.getint('Path_Command', 'min_edge_observations', fallback=3)
-
-        graph_use_bidirectional = self.config.getboolean('Path_Command', 'graph_use_bidirectional', fallback=True)
-        graph_use_hop_position = self.config.getboolean('Path_Command', 'graph_use_hop_position', fallback=True)
-        graph_multi_hop_enabled = self.config.getboolean('Path_Command', 'graph_multi_hop_enabled', fallback=True)
-        graph_multi_hop_max_hops = self.config.getint('Path_Command', 'graph_multi_hop_max_hops', fallback=2)
-        graph_geographic_combined = self.config.getboolean('Path_Command', 'graph_geographic_combined', fallback=False)
-        graph_geographic_weight = self.config.getfloat('Path_Command', 'graph_geographic_weight', fallback=0.7)
-        graph_geographic_weight = max(0.0, min(1.0, graph_geographic_weight))
-        graph_confidence_override_threshold = self.config.getfloat('Path_Command', 'graph_confidence_override_threshold', fallback=preset_graph_confidence_threshold)
-        graph_confidence_override_threshold = max(0.0, min(1.0, graph_confidence_override_threshold))
-        graph_distance_penalty_enabled = self.config.getboolean('Path_Command', 'graph_distance_penalty_enabled', fallback=True)
-        graph_max_reasonable_hop_distance_km = self.config.getfloat('Path_Command', 'graph_max_reasonable_hop_distance_km', fallback=preset_distance_threshold)
-        graph_distance_penalty_strength = self.config.getfloat('Path_Command', 'graph_distance_penalty_strength', fallback=preset_distance_penalty)
-        graph_distance_penalty_strength = max(0.0, min(1.0, graph_distance_penalty_strength))
-        graph_zero_hop_bonus = self.config.getfloat('Path_Command', 'graph_zero_hop_bonus', fallback=0.4)
-        graph_zero_hop_bonus = max(0.0, min(1.0, graph_zero_hop_bonus))
-        graph_prefer_stored_keys = self.config.getboolean('Path_Command', 'graph_prefer_stored_keys', fallback=True)
-
-        # Final hop proximity settings for graph selection
-        # Defaults based on LoRa ranges: typical < 30km, long up to 200km, very close < 10km
-        graph_final_hop_proximity_enabled = self.config.getboolean('Path_Command', 'graph_final_hop_proximity_enabled', fallback=True)
-        graph_final_hop_proximity_weight = self.config.getfloat('Path_Command', 'graph_final_hop_proximity_weight', fallback=preset_final_hop_weight)
-        graph_final_hop_proximity_weight = max(0.0, min(1.0, graph_final_hop_proximity_weight))
-        graph_final_hop_max_distance = self.config.getfloat('Path_Command', 'graph_final_hop_max_distance', fallback=0.0)
-        graph_final_hop_proximity_normalization_km = self.config.getfloat('Path_Command', 'graph_final_hop_proximity_normalization_km', fallback=200.0)  # Long LoRa range
-        graph_final_hop_very_close_threshold_km = self.config.getfloat('Path_Command', 'graph_final_hop_very_close_threshold_km', fallback=10.0)
-        graph_final_hop_close_threshold_km = self.config.getfloat('Path_Command', 'graph_final_hop_close_threshold_km', fallback=30.0)  # Typical LoRa range
-        graph_final_hop_max_proximity_weight = self.config.getfloat('Path_Command', 'graph_final_hop_max_proximity_weight', fallback=0.6)
-        graph_final_hop_max_proximity_weight = max(0.0, min(1.0, graph_final_hop_max_proximity_weight))
-        graph_path_validation_max_bonus = self.config.getfloat('Path_Command', 'graph_path_validation_max_bonus', fallback=0.3)
-        graph_path_validation_max_bonus = max(0.0, min(1.0, graph_path_validation_max_bonus))
-        graph_path_validation_obs_divisor = self.config.getfloat('Path_Command', 'graph_path_validation_obs_divisor', fallback=50.0)
-
-        star_bias_multiplier = self.config.getfloat('Path_Command', 'star_bias_multiplier', fallback=2.5)
-        star_bias_multiplier = max(1.0, star_bias_multiplier)
-
-        # Helper method to calculate recency scores (same as PathCommand._calculate_recency_weighted_scores)
-        def calculate_recency_weighted_scores(repeaters):
-            scored_repeaters = []
-            now = datetime.now()
-
-            for repeater in repeaters:
-                most_recent_time = None
-
-                for field in ['last_heard', 'last_advert_timestamp', 'last_seen']:
-                    value = repeater.get(field)
-                    if value:
-                        try:
-                            if isinstance(value, str):
-                                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                            else:
-                                dt = value
-                            if most_recent_time is None or dt > most_recent_time:
-                                most_recent_time = dt
-                        except:
-                            pass
-
-                if most_recent_time is None:
-                    recency_score = 0.1
-                else:
-                    hours_ago = (now - most_recent_time).total_seconds() / 3600.0
-                    recency_score = math.exp(-hours_ago / recency_decay_half_life_hours)
-                    recency_score = max(0.0, min(1.0, recency_score))
-
-                scored_repeaters.append((repeater, recency_score))
-
-            scored_repeaters.sort(key=lambda x: x[1], reverse=True)
-            return scored_repeaters
-
-        # Helper to get node location (same as PathCommand._get_node_location)
-        def get_node_location(node_id):
-            try:
-                if max_repeater_age_days > 0:
-                    query = f'''
-                        SELECT latitude, longitude FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND latitude IS NOT NULL AND longitude IS NOT NULL
-                        AND latitude != 0 AND longitude != 0 AND role IN ('repeater', 'roomserver')
-                        AND (
-                            (last_advert_timestamp IS NOT NULL AND last_advert_timestamp >= datetime('now', '-{max_repeater_age_days} days'))
-                            OR (last_advert_timestamp IS NULL AND last_heard >= datetime('now', '-{max_repeater_age_days} days'))
-                        )
-                        ORDER BY is_starred DESC, COALESCE(last_advert_timestamp, last_heard) DESC
-                        LIMIT 1
-                    '''
-                else:
-                    query = '''
-                        SELECT latitude, longitude FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND latitude IS NOT NULL AND longitude IS NOT NULL
-                        AND latitude != 0 AND longitude != 0 AND role IN ('repeater', 'roomserver')
-                        ORDER BY is_starred DESC, COALESCE(last_advert_timestamp, last_heard) DESC
-                        LIMIT 1
-                    '''
-
-                results = self.db_manager.execute_query(query, (f"{node_id}%",))
-                if results:
-                    return (results[0]['latitude'], results[0]['longitude'])
-                return None
-            except Exception:
-                return None
-
-        # Helper for simple proximity selection (same as PathCommand._select_by_simple_proximity)
-        def select_by_simple_proximity(repeaters_with_location):
-            scored_repeaters = calculate_recency_weighted_scores(repeaters_with_location)
-            min_recency_threshold = 0.01
-            scored_repeaters = [(r, score) for r, score in scored_repeaters if score >= min_recency_threshold]
-
-            if not scored_repeaters:
-                return None, 0.0
-
-            if len(scored_repeaters) == 1:
-                repeater, recency_score = scored_repeaters[0]
-                distance = calculate_distance(bot_latitude, bot_longitude, repeater['latitude'], repeater['longitude'])
-                if max_proximity_range > 0 and distance > max_proximity_range:
-                    return None, 0.0
-                base_confidence = 0.4 + (recency_score * 0.5)
-                return repeater, base_confidence
-
-            combined_scores = []
-            for repeater, recency_score in scored_repeaters:
-                distance = calculate_distance(bot_latitude, bot_longitude, repeater['latitude'], repeater['longitude'])
-                if max_proximity_range > 0 and distance > max_proximity_range:
-                    continue
-
-                normalized_distance = min(distance / 1000.0, 1.0)
-                proximity_score = 1.0 - normalized_distance
-                combined_score = (recency_score * recency_weight) + (proximity_score * proximity_weight)
-
-                if repeater.get('is_starred', False):
-                    combined_score *= star_bias_multiplier
-
-                combined_scores.append((combined_score, distance, repeater))
-
-            if not combined_scores:
-                return None, 0.0
-
-            combined_scores.sort(key=lambda x: x[0], reverse=True)
-            best_score, best_distance, best_repeater = combined_scores[0]
-
-            if len(combined_scores) == 1:
-                confidence = 0.4 + (best_score * 0.5)
-            else:
-                second_best_score = combined_scores[1][0]
-                score_ratio = best_score / second_best_score if second_best_score > 0 else 1.0
-                if score_ratio > 1.5:
-                    confidence = 0.9
-                elif score_ratio > 1.2:
-                    confidence = 0.8
-                elif score_ratio > 1.1:
-                    confidence = 0.7
-                else:
-                    confidence = 0.5
-
-            return best_repeater, confidence
-
-        # Helper for path proximity (simplified - for web viewer we'll use simple proximity)
-        def select_by_path_proximity(repeaters_with_location, node_id, path_context, sender_location):
-            scored_repeaters = calculate_recency_weighted_scores(repeaters_with_location)
-            min_recency_threshold = 0.01
-            recent_repeaters = [r for r, score in scored_repeaters if score >= min_recency_threshold]
-
-            if not recent_repeaters:
-                return None, 0.0
-
-            current_index = path_context.index(node_id) if node_id in path_context else -1
-            if current_index == -1:
-                return None, 0.0
-
-            is_last_repeater = (current_index == len(path_context) - 1)
-            if is_last_repeater and geographic_guessing_enabled and bot_latitude and bot_longitude:
-                bot_location = (bot_latitude, bot_longitude)
-                return select_by_single_proximity(recent_repeaters, bot_location, "bot")
-
-            # For other positions, use simple proximity
-            return select_by_simple_proximity(recent_repeaters)
-
-        # Helper for single proximity (same as PathCommand._select_by_single_proximity)
-        def select_by_single_proximity(repeaters, reference_location, direction):
-            scored_repeaters = calculate_recency_weighted_scores(repeaters)
-            min_recency_threshold = 0.01
-            scored_repeaters = [(r, score) for r, score in scored_repeaters if score >= min_recency_threshold]
-
-            if not scored_repeaters:
-                return None, 0.0
-
-            if direction == "bot" or direction == "sender":
-                proximity_weight_local = 1.0
-                recency_weight_local = 0.0
-            else:
-                proximity_weight_local = proximity_weight
-                recency_weight_local = recency_weight
-
-            best_repeater = None
-            best_combined_score = 0.0
-
-            for repeater, recency_score in scored_repeaters:
-                distance = calculate_distance(reference_location[0], reference_location[1],
-                                            repeater['latitude'], repeater['longitude'])
-
-                if max_proximity_range > 0 and distance > max_proximity_range:
-                    continue
-
-                normalized_distance = min(distance / 1000.0, 1.0)
-                proximity_score = 1.0 - normalized_distance
-                combined_score = (recency_score * recency_weight_local) + (proximity_score * proximity_weight_local)
-
-                if repeater.get('is_starred', False):
-                    combined_score *= star_bias_multiplier
-
-                if combined_score > best_combined_score:
-                    best_combined_score = combined_score
-                    best_repeater = repeater
-
-            if best_repeater:
-                confidence = 0.4 + (best_combined_score * 0.5)
-                return best_repeater, confidence
-
-            return None, 0.0
-
-        # Helper for graph-based selection (same as PathCommand._select_repeater_by_graph)
-        # When path was decoded with 2-byte or 3-byte hops, node_id/path_context have 4 or 6 hex chars;
-        # use path_prefix_hex_chars for candidate matching and normalize to graph_n for edge lookups.
-        def select_repeater_by_graph(repeaters, node_id, path_context):
-            if not graph_based_validation or not hasattr(self, 'mesh_graph') or not self.mesh_graph:
-                return None, 0.0, None
-
-            mesh_graph = self.mesh_graph
-            graph_n = prefix_hex_chars  # graph is keyed by config prefix length
-            path_prefix_hex_chars = len(node_id) if node_id else graph_n
-            prefix_n = path_prefix_hex_chars if path_prefix_hex_chars >= 2 else graph_n
-
-            try:
-                current_index = path_context.index(node_id) if node_id in path_context else -1
-            except Exception:
-                current_index = -1
-
-            if current_index == -1:
-                return None, 0.0, None
-
-            prev_node_id = path_context[current_index - 1] if current_index > 0 else None
-            next_node_id = path_context[current_index + 1] if current_index < len(path_context) - 1 else None
-            prev_norm = (prev_node_id[:graph_n].lower() if prev_node_id and len(prev_node_id) > graph_n else (prev_node_id.lower() if prev_node_id else None))
-            next_norm = (next_node_id[:graph_n].lower() if next_node_id and len(next_node_id) > graph_n else (next_node_id.lower() if next_node_id else None))
-
-            best_repeater = None
-            best_score = 0.0
-            best_method = None
-
-            for repeater in repeaters:
-                candidate_prefix = repeater.get('public_key', '')[:prefix_n].lower() if repeater.get('public_key') else None
-                candidate_public_key = repeater.get('public_key', '').lower() if repeater.get('public_key') else None
-                if not candidate_prefix:
-                    continue
-                candidate_norm = candidate_prefix[:graph_n].lower() if len(candidate_prefix) > graph_n else candidate_prefix
-
-                graph_score = mesh_graph.get_candidate_score(
-                    candidate_norm, prev_norm, next_norm, min_edge_observations,
-                    hop_position=current_index if graph_use_hop_position else None,
-                    use_bidirectional=graph_use_bidirectional,
-                    use_hop_position=graph_use_hop_position
-                )
-
-                stored_key_bonus = 0.0
-                if graph_prefer_stored_keys and candidate_public_key:
-                    if prev_norm:
-                        prev_to_candidate_edge = mesh_graph.get_edge(prev_norm, candidate_norm)
-                        if prev_to_candidate_edge:
-                            stored_to_key = prev_to_candidate_edge.get('to_public_key', '').lower() if prev_to_candidate_edge.get('to_public_key') else None
-                            if stored_to_key and stored_to_key == candidate_public_key:
-                                stored_key_bonus = max(stored_key_bonus, 0.4)
-
-                    if next_norm:
-                        candidate_to_next_edge = mesh_graph.get_edge(candidate_norm, next_norm)
-                        if candidate_to_next_edge:
-                            stored_from_key = candidate_to_next_edge.get('from_public_key', '').lower() if candidate_to_next_edge.get('from_public_key') else None
-                            if stored_from_key and stored_from_key == candidate_public_key:
-                                stored_key_bonus = max(stored_key_bonus, 0.4)
-
-                # Zero-hop bonus: If this repeater has been heard directly by the bot (zero-hop advert),
-                # it's strong evidence it's close and should be preferred, even for intermediate hops
-                zero_hop_bonus = 0.0
-                hop_count = repeater.get('hop_count')
-                if hop_count is not None and hop_count == 0:
-                    # This repeater has been heard directly - strong evidence it's close to bot
-                    zero_hop_bonus = graph_zero_hop_bonus
-
-                graph_score_with_bonus = min(1.0, graph_score + stored_key_bonus + zero_hop_bonus)
-
-                multi_hop_score = 0.0
-                if graph_multi_hop_enabled and graph_score_with_bonus < 0.6 and prev_norm and next_norm:
-                    intermediate_candidates = mesh_graph.find_intermediate_nodes(
-                        prev_norm, next_norm, min_edge_observations,
-                        max_hops=graph_multi_hop_max_hops
-                    )
-
-                    for intermediate_prefix, intermediate_score in intermediate_candidates:
-                        if intermediate_prefix == candidate_norm:
-                            multi_hop_score = intermediate_score
-                            break
-
-                candidate_score = max(graph_score_with_bonus, multi_hop_score)
-                method = 'graph_multihop' if multi_hop_score > graph_score_with_bonus else 'graph'
-
-                # Apply distance penalty for intermediate hops (prevents selecting very distant repeaters)
-                # This is especially important when graph has strong evidence for long-distance links
-                if graph_distance_penalty_enabled and next_norm is not None:  # Not final hop
-                    repeater_lat = repeater.get('latitude')
-                    repeater_lon = repeater.get('longitude')
-
-                    if repeater_lat is not None and repeater_lon is not None:
-                        max_distance = 0.0
-
-                        # Check distance from previous node to candidate (use stored edge distance if available)
-                        if prev_norm:
-                            prev_to_candidate_edge = mesh_graph.get_edge(prev_norm, candidate_norm)
-                            if prev_to_candidate_edge and prev_to_candidate_edge.get('geographic_distance'):
-                                distance = prev_to_candidate_edge.get('geographic_distance')
-                                max_distance = max(max_distance, distance)
-
-                        # Check distance from candidate to next node (use stored edge distance if available)
-                        if next_norm:
-                            candidate_to_next_edge = mesh_graph.get_edge(candidate_norm, next_norm)
-                            if candidate_to_next_edge and candidate_to_next_edge.get('geographic_distance'):
-                                distance = candidate_to_next_edge.get('geographic_distance')
-                                max_distance = max(max_distance, distance)
-
-                        # Apply penalty if distance exceeds reasonable hop distance
-                        if max_distance > graph_max_reasonable_hop_distance_km:
-                            excess_distance = max_distance - graph_max_reasonable_hop_distance_km
-                            normalized_excess = min(excess_distance / graph_max_reasonable_hop_distance_km, 1.0)
-                            penalty = normalized_excess * graph_distance_penalty_strength
-                            candidate_score = candidate_score * (1.0 - penalty)
-                        elif max_distance > 0:
-                            # Even if under threshold, very long hops should get a small penalty
-                            if max_distance > graph_max_reasonable_hop_distance_km * 0.8:
-                                small_penalty = (max_distance - graph_max_reasonable_hop_distance_km * 0.8) / (graph_max_reasonable_hop_distance_km * 0.2) * graph_distance_penalty_strength * 0.5
-                                candidate_score = candidate_score * (1.0 - small_penalty)
-
-                # For final hop (next_norm is None), add bot location proximity bonus
-                # This is critical for final hop selection - the last repeater before the bot should be close
-                if next_norm is None and graph_final_hop_proximity_enabled:
-                    if bot_latitude is not None and bot_longitude is not None:
-                        repeater_lat = repeater.get('latitude')
-                        repeater_lon = repeater.get('longitude')
-
-                        if repeater_lat is not None and repeater_lon is not None:
-                            # Calculate distance to bot
-                            distance = calculate_distance(
-                                bot_latitude, bot_longitude,
-                                repeater_lat, repeater_lon
-                            )
-
-                            # Apply max distance threshold if configured
-                            if graph_final_hop_max_distance > 0 and distance > graph_final_hop_max_distance:
-                                # Beyond max distance - significantly penalize this candidate for final hop
-                                candidate_score *= 0.3  # Heavy penalty for distant final hop
-                            else:
-                                # Normalize distance to 0-1 score (inverse: closer = higher score)
-                                # Use configurable normalization distance (default 500km for more aggressive scoring)
-                                normalized_distance = min(distance / graph_final_hop_proximity_normalization_km, 1.0)
-                                proximity_score = 1.0 - normalized_distance
-
-                                # For final hop, use a higher effective weight to ensure proximity matters more
-                                # The configured weight is a minimum; we boost it for very close repeaters
-                                effective_weight = graph_final_hop_proximity_weight
-                                if distance < graph_final_hop_very_close_threshold_km:
-                                    # Very close - boost weight up to max
-                                    effective_weight = min(graph_final_hop_max_proximity_weight, graph_final_hop_proximity_weight * 2.0)
-                                elif distance < graph_final_hop_close_threshold_km:
-                                    # Close - moderate boost
-                                    effective_weight = min(0.5, graph_final_hop_proximity_weight * 1.5)
-
-                                # Combine with graph score using effective weight
-                                candidate_score = candidate_score * (1.0 - effective_weight) + proximity_score * effective_weight
-
-                # Path validation bonus: Check if candidate's stored paths match the current path context
-                path_validation_bonus = 0.0
-                if candidate_public_key and len(path_context) > 1:
-                    try:
-                        # Query stored paths from this repeater
-                        query = '''
-                            SELECT path_hex, observation_count, last_seen, from_prefix, to_prefix, bytes_per_hop
-                            FROM observed_paths
-                            WHERE public_key = ? AND packet_type = 'advert'
-                            ORDER BY observation_count DESC, last_seen DESC
-                            LIMIT 10
-                        '''
-                        stored_paths = self.db_manager.execute_query(query, (candidate_public_key,))
-
-                        if stored_paths:
-                            # Build the path we're decoding (full path context)
-                            decoded_path_hex = ''.join([node.lower() for node in path_context])
-                            # Build the path prefix up to (but not including) the current node
-                            # This helps match paths where the candidate appears at the same position
-                            path_prefix_up_to_current = ''.join([node.lower() for node in path_context[:current_index]])
-
-                            # Check if any stored path shares common segments with decoded path
-                            for stored_path in stored_paths:
-                                stored_hex = stored_path.get('path_hex', '').lower()
-                                obs_count = stored_path.get('observation_count', 1)
-
-                                if stored_hex:
-                                    # Chunk size: use stored bytes_per_hop (multi-byte path support)
-                                    n = (stored_path.get('bytes_per_hop') or 1) * 2
-                                    if n <= 0:
-                                        n = 2
-                                    stored_nodes = [stored_hex[i:i+n] for i in range(0, len(stored_hex), n)]
-                                    if (len(stored_hex) % n) != 0:
-                                        stored_nodes = [stored_hex[i:i+2] for i in range(0, len(stored_hex), 2)]
-                                    decoded_nodes = path_context if path_context else [decoded_path_hex[i:i+n] for i in range(0, len(decoded_path_hex), n)]
-
-                                    # Count how many nodes appear in both paths (in order)
-                                    common_segments = 0
-                                    min_len = min(len(stored_nodes), len(decoded_nodes))
-                                    for i in range(min_len):
-                                        if stored_nodes[i] == decoded_nodes[i]:
-                                            common_segments += 1
-                                        else:
-                                            break
-
-                                    # Also check if stored path starts with the same prefix as the decoded path up to current position
-                                    # This is important for matching paths where the candidate appears at the same position
-                                    prefix_match = False
-                                    if path_prefix_up_to_current and len(stored_hex) >= len(path_prefix_up_to_current):
-                                        if stored_hex.startswith(path_prefix_up_to_current):
-                                            # The stored path has the same prefix, and the candidate appears at the same position
-                                            # This is a strong indicator of a match
-                                            prefix_match = True
-
-                                    # Bonus based on common segments and observation count
-                                    if common_segments >= 2 or prefix_match:
-                                        # Stronger bonus for prefix matches (indicates same path structure)
-                                        if prefix_match and common_segments >= current_index:
-                                            segment_bonus = min(graph_path_validation_max_bonus, 0.1 * (current_index + 1))
-                                        else:
-                                            segment_bonus = min(0.2, 0.05 * common_segments)
-                                        obs_bonus = min(0.15, obs_count / graph_path_validation_obs_divisor)
-                                        path_validation_bonus = max(path_validation_bonus, segment_bonus + obs_bonus)
-                                        # Cap at max bonus
-                                        path_validation_bonus = min(graph_path_validation_max_bonus, path_validation_bonus)
-                                        if path_validation_bonus >= graph_path_validation_max_bonus * 0.9:
-                                            break  # Strong match found, no need to check more
-                    except (sqlite3.Error, OSError, KeyError, ValueError) as _score_err:
-                        self.logger.debug("Path-scoring graph query failed: %s", _score_err)
-
-                # Add path validation bonus to graph score
-                candidate_score = min(1.0, candidate_score + path_validation_bonus)
-
-                if repeater.get('is_starred', False):
-                    candidate_score *= star_bias_multiplier
-
-                if candidate_score > best_score:
-                    best_score = candidate_score
-                    best_repeater = repeater
-                    best_method = method
-
-            if best_repeater and best_score > 0.0:
-                confidence = min(1.0, best_score) if best_score <= 1.0 else 0.95 + (min(0.05, (best_score - 1.0) / star_bias_multiplier))
-                return best_repeater, confidence, best_method or 'graph'
-
-            return None, 0.0, None
-
-        # Main resolution logic (same as PathCommand._lookup_repeater_names)
-        repeater_info = {}
-
-        try:
-            for node_id in node_ids:
-                # Query database for matching repeaters
-                if max_repeater_age_days > 0:
-                    query = f'''
-                        SELECT name, public_key, device_type, last_heard, last_heard as last_seen,
-                               last_advert_timestamp, latitude, longitude, city, state, country,
-                               advert_count, signal_strength, hop_count, role, is_starred
-                        FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND role IN ('repeater', 'roomserver')
-                        AND (
-                            (last_advert_timestamp IS NOT NULL AND last_advert_timestamp >= datetime('now', '-{max_repeater_age_days} days'))
-                            OR (last_advert_timestamp IS NULL AND last_heard >= datetime('now', '-{max_repeater_age_days} days'))
-                        )
-                        ORDER BY COALESCE(last_advert_timestamp, last_heard) DESC
-                    '''
-                else:
-                    query = '''
-                        SELECT name, public_key, device_type, last_heard, last_heard as last_seen,
-                               last_advert_timestamp, latitude, longitude, city, state, country,
-                               advert_count, signal_strength, hop_count, role, is_starred
-                        FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND role IN ('repeater', 'roomserver')
-                        ORDER BY COALESCE(last_advert_timestamp, last_heard) DESC
-                    '''
-
-                prefix_pattern = f"{node_id}%"
-                results = self.db_manager.execute_query(query, (prefix_pattern,))
-
-                if results:
-                    repeaters_data = [
-                        {
-                            'name': row['name'],
-                            'public_key': row['public_key'],
-                            'device_type': row['device_type'],
-                            'last_seen': row['last_seen'],
-                            'last_heard': row.get('last_heard', row['last_seen']),
-                            'last_advert_timestamp': row.get('last_advert_timestamp'),
-                            'is_active': True,
-                            'latitude': row['latitude'],
-                            'longitude': row['longitude'],
-                            'city': row['city'],
-                            'state': row['state'],
-                            'country': row['country'],
-                            'hop_count': row.get('hop_count'),  # Include hop_count for zero-hop bonus
-                            'is_starred': bool(row.get('is_starred', 0))
-                        } for row in results
-                    ]
-
-                    if len(repeaters_data) == 1:
-                        recent_repeaters = repeaters_data
-                    else:
-                        scored_repeaters = calculate_recency_weighted_scores(repeaters_data)
-                        min_recency_threshold = 0.01
-                        recent_repeaters = [
-                            r for r, score in scored_repeaters if score >= min_recency_threshold
-                        ]
-
-                    if len(recent_repeaters) > 1:
-                        # Multiple matches - use graph and geographic selection
-                        graph_repeater = None
-                        graph_confidence = 0.0
-                        selection_method = None
-                        geo_repeater = None
-                        geo_confidence = 0.0
-
-                        if graph_based_validation and hasattr(self, 'mesh_graph') and self.mesh_graph:
-                            graph_repeater, graph_confidence, selection_method = select_repeater_by_graph(
-                                recent_repeaters, node_id, node_ids
-                            )
-
-                        if geographic_guessing_enabled:
-                            if proximity_method == 'path':
-                                geo_repeater, geo_confidence = select_by_path_proximity(
-                                    recent_repeaters, node_id, node_ids, None
-                                )
-                            else:
-                                geo_repeater, geo_confidence = select_by_simple_proximity(recent_repeaters)
-
-                        # Combine or choose
-                        selected_repeater = None
-                        confidence = 0.0
-                        final_method = None
-
-                        if graph_geographic_combined and graph_repeater and geo_repeater:
-                            graph_pubkey = graph_repeater.get('public_key', '')
-                            geo_pubkey = geo_repeater.get('public_key', '')
-
-                            if graph_pubkey and geo_pubkey and graph_pubkey == geo_pubkey:
-                                combined_confidence = (
-                                    graph_confidence * graph_geographic_weight +
-                                    geo_confidence * (1.0 - graph_geographic_weight)
-                                )
-                                selected_repeater = graph_repeater
-                                confidence = combined_confidence
-                                final_method = 'graph_geographic_combined'
-                            else:
-                                if graph_confidence > geo_confidence:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-                                    final_method = selection_method or 'graph'
-                                else:
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                                    final_method = 'geographic'
-                        else:
-                            # For final hop, prefer geographic selection if available and reasonable
-                            # The final hop should be close to the bot, so geographic proximity is very important
-                            is_final_hop = (node_id == node_ids[-1] if node_ids else False)
-
-                            if is_final_hop and geo_repeater and geo_confidence >= 0.6:
-                                # For final hop, prefer geographic if it has decent confidence
-                                # This ensures we pick the closest repeater for the last hop
-                                if not graph_repeater or geo_confidence >= graph_confidence * 0.9:
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                                    final_method = 'geographic'
-                                elif graph_repeater:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-                                    final_method = selection_method or 'graph'
-                            elif graph_repeater and graph_confidence >= graph_confidence_override_threshold:
-                                selected_repeater = graph_repeater
-                                confidence = graph_confidence
-                                final_method = selection_method or 'graph'
-                            elif not graph_repeater or graph_confidence < graph_confidence_override_threshold:
-                                if geo_repeater and (not graph_repeater or geo_confidence > graph_confidence):
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                                    final_method = 'geographic'
-                                elif graph_repeater:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-                                    final_method = selection_method or 'graph'
-
-                        if selected_repeater and confidence >= 0.5:
-                            repeater_info[node_id] = {
-                                'name': selected_repeater['name'],
-                                'public_key': selected_repeater['public_key'],
-                                'device_type': selected_repeater['device_type'],
-                                'last_seen': selected_repeater['last_seen'],
-                                'is_active': selected_repeater['is_active'],
-                                'found': True,
-                                'collision': False,
-                                'geographic_guess': (final_method == 'geographic'),
-                                'graph_guess': (final_method == 'graph' or final_method == 'graph_multihop'),
-                                'confidence': confidence,
-                                'selection_method': final_method,
-                                'latitude': selected_repeater.get('latitude'),
-                                'longitude': selected_repeater.get('longitude')
-                            }
-                        else:
-                            repeater_info[node_id] = {
-                                'found': True,
-                                'collision': True,
-                                'matches': len(recent_repeaters),
-                                'node_id': node_id
-                            }
-                    elif len(recent_repeaters) == 1:
-                        repeater = recent_repeaters[0]
-                        repeater_info[node_id] = {
-                            'name': repeater['name'],
-                            'public_key': repeater['public_key'],
-                            'device_type': repeater['device_type'],
-                            'last_seen': repeater['last_seen'],
-                            'is_active': repeater['is_active'],
-                            'found': True,
-                            'collision': False,
-                            'latitude': repeater.get('latitude'),
-                            'longitude': repeater.get('longitude')
-                        }
-                    else:
-                        repeater_info[node_id] = {
-                            'found': False,
-                            'node_id': node_id
-                        }
-                else:
-                    repeater_info[node_id] = {
-                        'found': False,
-                        'node_id': node_id
-                    }
-        except Exception as e:
-            self.logger.error(f"Error resolving path: {e}")
-            return {
-                'node_ids': node_ids,
-                'repeaters': [],
-                'valid': False,
-                'error': str(e)
-            }
-
-        # Format response
-        repeaters_list = []
-        for node_id in node_ids:
-            info = repeater_info.get(node_id, {'found': False, 'node_id': node_id})
-            repeaters_list.append({
-                'node_id': node_id,
-                **info
-            })
-
-        return {
-            'node_ids': node_ids,
-            'repeaters': repeaters_list,
-            'valid': True
-        }
+        if not hasattr(self, "db_manager") or not self.db_manager:
+            return {"node_ids": [], "repeaters": [], "valid": False,
+                    "error": "Database manager not initialized"}
+        from modules.path_inference import decode_path_nodes
+        nodes = decode_path_nodes(
+            path_input,
+            None,
+            config=self.config,
+            db_manager=self.db_manager,
+            logger=self.logger,
+            mesh_graph=getattr(self, "mesh_graph", None),
+            include_location=True,
+        )
+        node_ids = [n["node_id"] for n in nodes]
+        if not node_ids:
+            return {"node_ids": [], "repeaters": [], "valid": False,
+                    "error": "No valid hex values found"}
+        return {"node_ids": node_ids, "repeaters": nodes, "valid": True}
 
     def _setup_routes(self):
         """Setup all Flask routes - complete feature parity"""
@@ -2397,6 +1647,20 @@ class BotDataViewer:
                 self.logger.error(f"Error getting contacts: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        @self.app.route('/api/contact-detail')
+        def api_contact_detail():
+            """On-demand per-contact detail (recent advert paths + advertisement data) for the
+            contacts UI modals. These are intentionally excluded from the /api/contacts list
+            payload. Query param: user_id (the contact's public key)."""
+            try:
+                public_key = request.args.get('user_id', '').strip()
+                if not public_key:
+                    return jsonify({'error': 'user_id is required'}), 400
+                return jsonify(self._get_contact_detail(public_key))
+            except Exception as e:
+                self.logger.error(f"Error getting contact detail: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @self.app.route('/api/multibyte-rollout')
         def api_multibyte_rollout():
             """Multibyte hash rollout analytics. since=24h|7d|30d|90d|all, node_type=all|repeater|roomserver."""
@@ -2778,7 +2042,7 @@ class BotDataViewer:
             if since not in ('24h', '7d', '30d', '90d', 'all'):
                 since = '30d'
             try:
-                result = self._get_tracking_data(since=since)
+                result = self._get_tracking_data(since=since, include_detail=True)
                 contacts = result.get('tracking_data', [])
                 if fmt == 'csv':
                     fields = [
@@ -2823,7 +2087,7 @@ class BotDataViewer:
             try:
                 days_map = {'24h': 1, '7d': 7, '30d': 30, '90d': 90}
                 where = (
-                    f" AND op.last_seen >= datetime('now', '-{days_map[since]} days')"
+                    f" AND op.last_seen >= datetime('now', 'localtime', '-{days_map[since]} days')"
                     if since != 'all' else ''
                 )
                 with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
@@ -3135,12 +2399,12 @@ class BotDataViewer:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT COUNT(*) AS cnt FROM complete_contact_tracking
-                    WHERE last_heard < datetime('now', ? || ' days')
+                    WHERE last_heard < datetime('now', 'localtime', ? || ' days')
                 ''', (f'-{days}',))
                 count = cursor.fetchone()['cnt']
                 cursor.execute('''
                     SELECT name, role, last_heard FROM complete_contact_tracking
-                    WHERE last_heard < datetime('now', ? || ' days')
+                    WHERE last_heard < datetime('now', 'localtime', ? || ' days')
                     ORDER BY last_heard ASC
                     LIMIT 5
                 ''', (f'-{days}',))
@@ -3172,7 +2436,7 @@ class BotDataViewer:
                 # Collect public_keys to purge so we can cascade
                 cursor.execute('''
                     SELECT public_key FROM complete_contact_tracking
-                    WHERE last_heard < datetime('now', ?)
+                    WHERE last_heard < datetime('now', 'localtime', ?)
                 ''', (cutoff,))
                 keys = [r['public_key'] for r in cursor.fetchall()]
                 if not keys:
@@ -4640,13 +3904,13 @@ class BotDataViewer:
 
                 cursor.execute("""
                     SELECT COUNT(*) FROM complete_contact_tracking
-                    WHERE last_heard > datetime('now', '-24 hours')
+                    WHERE last_heard > datetime('now', 'localtime', '-24 hours')
                 """)
                 stats['contacts_24h'] = cursor.fetchone()[0]
 
                 cursor.execute("""
                     SELECT COUNT(*) FROM complete_contact_tracking
-                    WHERE last_heard > datetime('now', '-7 days')
+                    WHERE last_heard > datetime('now', 'localtime', '-7 days')
                 """)
                 stats['contacts_7d'] = cursor.fetchone()[0]
 
@@ -4667,7 +3931,7 @@ class BotDataViewer:
                             SELECT DISTINCT public_key FROM observed_paths
                             WHERE packet_type = 'advert' AND public_key IS NOT NULL
                             AND bytes_per_hop IN (2, 3)
-                            AND date(last_seen) >= date('now', '-7 days')
+                            AND date(last_seen) >= date('now', 'localtime', '-7 days')
                             """
                         )
                         mb_advert_pks = {
@@ -4680,7 +3944,7 @@ class BotDataViewer:
                         """
                         SELECT public_key, role, out_bytes_per_hop
                         FROM complete_contact_tracking
-                        WHERE last_heard > datetime('now', '-7 days')
+                        WHERE last_heard > datetime('now', 'localtime', '-7 days')
                         """
                     )
                     mb_7d = 0
@@ -4771,27 +4035,27 @@ class BotDataViewer:
                 # 24h advertisements
                 cursor.execute("""
                     SELECT SUM(advert_count) FROM daily_stats
-                    WHERE date = date('now')
+                    WHERE date = date('now', 'localtime')
                 """)
                 stats['advertisements_24h'] = cursor.fetchone()[0] or 0
 
                 # 7d advertisements (last 7 days, excluding today)
                 cursor.execute("""
                     SELECT SUM(advert_count) FROM daily_stats
-                    WHERE date >= date('now', '-7 days') AND date < date('now')
+                    WHERE date >= date('now', 'localtime', '-7 days') AND date < date('now', 'localtime')
                 """)
                 stats['advertisements_7d'] = cursor.fetchone()[0] or 0
 
                 # Nodes per day statistics
                 cursor.execute("""
                     SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                    WHERE date = date('now')
+                    WHERE date = date('now', 'localtime')
                 """)
                 stats['nodes_24h'] = cursor.fetchone()[0] or 0
 
                 cursor.execute("""
                     SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                    WHERE date >= date('now', '-6 days')
+                    WHERE date >= date('now', 'localtime', '-6 days')
                 """)
                 stats['nodes_7d'] = cursor.fetchone()[0] or 0
 
@@ -4810,13 +4074,13 @@ class BotDataViewer:
 
                     cursor.execute("""
                         SELECT SUM(advert_count) FROM complete_contact_tracking
-                        WHERE last_heard > datetime('now', '-24 hours')
+                        WHERE last_heard > datetime('now', 'localtime', '-24 hours')
                     """)
                     stats['advertisements_24h'] = cursor.fetchone()[0] or 0
 
                     cursor.execute("""
                         SELECT SUM(advert_count) FROM complete_contact_tracking
-                        WHERE last_heard > datetime('now', '-7 days')
+                        WHERE last_heard > datetime('now', 'localtime', '-7 days')
                     """)
                     stats['advertisements_7d'] = cursor.fetchone()[0] or 0
 
@@ -5049,14 +4313,14 @@ class BotDataViewer:
             if 'complete_contact_tracking' in tables:
                 cursor.execute("""
                     SELECT AVG(snr) FROM complete_contact_tracking
-                    WHERE snr IS NOT NULL AND last_heard > datetime('now', '-24 hours')
+                    WHERE snr IS NOT NULL AND last_heard > datetime('now', 'localtime', '-24 hours')
                 """)
                 avg_snr = cursor.fetchone()[0]
                 stats['avg_snr_24h'] = round(avg_snr, 1) if avg_snr else 0
 
                 cursor.execute("""
                     SELECT AVG(signal_strength) FROM complete_contact_tracking
-                    WHERE signal_strength IS NOT NULL AND last_heard > datetime('now', '-24 hours')
+                    WHERE signal_strength IS NOT NULL AND last_heard > datetime('now', 'localtime', '-24 hours')
                 """)
                 avg_signal = cursor.fetchone()[0]
                 stats['avg_signal_strength_24h'] = round(avg_signal, 1) if avg_signal else 0
@@ -5073,7 +4337,7 @@ class BotDataViewer:
                         END
                     ) FROM complete_contact_tracking
                     WHERE country IS NOT NULL AND country != ''
-                    AND last_heard > datetime('now', '-30 days')
+                    AND last_heard > datetime('now', 'localtime', '-30 days')
                     AND is_currently_tracked = 1
                 """)
                 stats['countries'] = cursor.fetchone()[0]
@@ -5081,7 +4345,7 @@ class BotDataViewer:
                 cursor.execute("""
                     SELECT COUNT(DISTINCT state) FROM complete_contact_tracking
                     WHERE state IS NOT NULL AND state != ''
-                    AND last_heard > datetime('now', '-30 days')
+                    AND last_heard > datetime('now', 'localtime', '-30 days')
                     AND is_currently_tracked = 1
                 """)
                 stats['states'] = cursor.fetchone()[0]
@@ -5089,7 +4353,7 @@ class BotDataViewer:
                 cursor.execute("""
                     SELECT COUNT(DISTINCT city) FROM complete_contact_tracking
                     WHERE city IS NOT NULL AND city != ''
-                    AND last_heard > datetime('now', '-30 days')
+                    AND last_heard > datetime('now', 'localtime', '-30 days')
                     AND is_currently_tracked = 1
                 """)
                 stats['cities'] = cursor.fetchone()[0]
@@ -5351,10 +4615,12 @@ class BotDataViewer:
             extra = ""
             if recent_days is not None:
                 d = max(1, min(int(recent_days), 366))
-                extra = f" AND date(last_seen) >= date('now', '-{d} days')"
+                extra = f" AND date(last_seen) >= date('now', 'localtime', '-{d} days')"
+            # DISTINCT collapses the many duplicate (path_hex, bytes_per_hop) advert rows in SQL,
+            # so Python only splits each distinct path once instead of every observation.
             cursor.execute(
                 f"""
-                SELECT path_hex, bytes_per_hop FROM observed_paths
+                SELECT DISTINCT path_hex, bytes_per_hop FROM observed_paths
                 WHERE bytes_per_hop IN (2, 3) AND path_hex IS NOT NULL AND length(path_hex) > 0
                 {extra}
                 """
@@ -5373,13 +4639,29 @@ class BotDataViewer:
             self.logger.debug(f"Could not load multibyte hop chunks: {e}")
         return chunks
 
+    @staticmethod
+    def _bucket_hop_chunks(multibyte_hop_chunks: set[str]) -> dict[int, set[str]]:
+        """Bucket hop-prefix chunks by length (4 or 6) for O(1) prefix matching.
+
+        Build this once per request and reuse across the per-contact badge loop instead of
+        scanning the whole chunk set for every contact.
+        """
+        return {
+            4: {c for c in multibyte_hop_chunks if len(c) == 4},
+            6: {c for c in multibyte_hop_chunks if len(c) == 6},
+        }
+
     def _compute_path_encoding_badge(
         self,
         row: Any,
         all_paths: list[dict[str, Any]],
-        multibyte_hop_chunks: set[str],
+        chunk_buckets: dict[int, set[str]],
     ) -> str | None:
-        """Return 'multibyte', 'one_byte', or None for contacts path-encoding badge."""
+        """Return 'multibyte', 'one_byte', or None for contacts path-encoding badge.
+
+        ``chunk_buckets`` is the length-bucketed form of the multibyte hop chunks
+        (see _bucket_hop_chunks).
+        """
         pk = row["public_key"] or ""
         role = (row["role"] or "").lower()
         obph_raw = row["out_bytes_per_hop"]
@@ -5418,9 +4700,9 @@ class BotDataViewer:
                 return "multibyte"
         if role in ("repeater", "roomserver") and pk:
             pk_low = pk.lower()
-            for chunk in multibyte_hop_chunks:
-                if pk_low.startswith(chunk):
-                    return "multibyte"
+            # Chunks are fixed-length (4 or 6), so startswith reduces to prefix-equality lookups.
+            if pk_low[:4] in chunk_buckets[4] or pk_low[:6] in chunk_buckets[6]:
+                return "multibyte"
 
         # One-byte: positive signal and no multibyte observation
         has_signal = bool(
@@ -5587,7 +4869,7 @@ class BotDataViewer:
             if since in datetime_offsets:
                 where_clause = (
                     f"WHERE {role_filter}"
-                    f" AND c.last_heard >= datetime('now', {datetime_offsets[since]})"
+                    f" AND c.last_heard >= datetime('now', 'localtime', {datetime_offsets[since]})"
                 )
             else:
                 where_clause = f"WHERE {role_filter}"
@@ -5607,6 +4889,7 @@ class BotDataViewer:
                 multibyte_hop_chunks = self._collect_multibyte_hop_chunks(
                     cursor, recent_days=_chunk_recent_days
                 )
+            chunk_buckets = self._bucket_hop_chunks(multibyte_hop_chunks)
 
             # Per-repeater path traffic totals (advert paths only)
             path_traffic: dict[str, dict] = {}
@@ -5629,11 +4912,34 @@ class BotDataViewer:
                         'latest_path_seen': pt_row['latest_path_seen'],
                     }
 
-            # Main query: repeaters with their recent advert paths via GROUP_CONCAT
             # Scope the path history to the same window so badge evidence matches the since filter.
             path_time_cond = ""
             if since in datetime_offsets:
-                path_time_cond = f"AND last_seen >= datetime('now', {datetime_offsets[since]})"
+                path_time_cond = f"AND last_seen >= datetime('now', 'localtime', {datetime_offsets[since]})"
+
+            # Fetch the relay contacts directly (no join/group-by); their recent advert paths are
+            # loaded separately below and assembled in Python. This mirrors _get_tracking_data and
+            # keeps the planner on the idx_observed_paths_advert_pk_seen covering index for the path
+            # scan instead of building a runtime automatic index for a LEFT JOIN + GROUP_CONCAT.
+            cursor.execute(
+                f"""
+                SELECT
+                    c.public_key, c.name, c.role, c.device_type,
+                    c.latitude, c.longitude, c.city, c.state, c.country,
+                    c.first_heard, c.last_heard,
+                    c.advert_count, c.out_bytes_per_hop, c.out_path_len
+                FROM complete_contact_tracking c
+                {where_clause}
+                ORDER BY c.last_heard DESC
+                """
+            )
+            main_rows = cursor.fetchall()
+
+            # Recent advert paths per contact (most-recent 50), grouped in Python by public_key.
+            # With idx_observed_paths_advert_pk_seen this runs as an ordered covering index scan.
+            # We don't filter to the relay keys here: the loop only looks up paths for contacts in
+            # main_rows, and joining the key set pushes the planner off the covering index.
+            paths_by_key: dict[str, list[dict]] = {}
             if has_observed_paths:
                 cursor.execute(
                     f"""
@@ -5644,44 +4950,29 @@ class BotDataViewer:
                         WHERE packet_type = 'advert' AND public_key IS NOT NULL
                         {path_time_cond}
                     )
-                    SELECT
-                        c.public_key, c.name, c.role, c.device_type,
-                        c.latitude, c.longitude, c.city, c.state, c.country,
-                        c.first_heard, c.last_heard,
-                        c.advert_count, c.out_bytes_per_hop, c.out_path_len,
-                        GROUP_CONCAT(op.path_hex, '|||') as all_paths_hex,
-                        GROUP_CONCAT(COALESCE(op.bytes_per_hop, 1), '|||') as all_paths_bph,
-                        GROUP_CONCAT(op.observation_count, '|||') as all_paths_obs,
-                        GROUP_CONCAT(op.last_seen, '|||') as all_paths_last_seen
-                    FROM complete_contact_tracking c
-                    LEFT JOIN (
-                        SELECT public_key, path_hex, bytes_per_hop, observation_count, last_seen
-                        FROM recent_paths WHERE rn <= 50
-                    ) op ON c.public_key = op.public_key
-                    {where_clause}
-                    GROUP BY c.public_key
-                    ORDER BY c.last_heard DESC
+                    SELECT public_key, path_hex, bytes_per_hop, observation_count, last_seen
+                    FROM recent_paths WHERE rn <= 50
+                    ORDER BY public_key, last_seen DESC
                     """
                 )
-            else:
-                cursor.execute(
-                    f"""
-                    SELECT
-                        c.public_key, c.name, c.role, c.device_type,
-                        c.latitude, c.longitude, c.city, c.state, c.country,
-                        c.first_heard, c.last_heard,
-                        c.advert_count, c.out_bytes_per_hop, c.out_path_len,
-                        NULL as all_paths_hex,
-                        NULL as all_paths_bph,
-                        NULL as all_paths_obs,
-                        NULL as all_paths_last_seen
-                    FROM complete_contact_tracking c
-                    {where_clause}
-                    ORDER BY c.last_heard DESC
-                    """
-                )
-
-            main_rows = cursor.fetchall()
+                for prow in cursor.fetchall():
+                    ph = prow['path_hex']
+                    if not ph:
+                        continue
+                    bph = 1
+                    if prow['bytes_per_hop'] is not None:
+                        try:
+                            bph = int(prow['bytes_per_hop'])
+                            if bph not in (1, 2, 3):
+                                bph = 1
+                        except (TypeError, ValueError):
+                            bph = 1
+                    paths_by_key.setdefault(prow['public_key'], []).append({
+                        'path_hex': ph,
+                        'bytes_per_hop': bph,
+                        'observation_count': int(prow['observation_count']) if prow['observation_count'] is not None else 1,
+                        'last_seen': prow['last_seen'] if prow['last_seen'] is not None else None,
+                    })
 
             # Classify each repeater
             status_counts: dict[str, int] = {
@@ -5695,32 +4986,10 @@ class BotDataViewer:
             for row in main_rows:
                 pk = row['public_key']
 
-                # Parse all_paths
-                all_paths: list[dict] = []
-                if row['all_paths_hex']:
-                    hexes = row['all_paths_hex'].split('|||')
-                    bphs  = (row['all_paths_bph'] or '').split('|||')
-                    obss  = (row['all_paths_obs'] or '').split('|||')
-                    lsns  = (row['all_paths_last_seen'] or '').split('|||')
-                    for i, ph in enumerate(hexes):
-                        if not ph:
-                            continue
-                        bph = 1
-                        if i < len(bphs) and bphs[i]:
-                            try:
-                                bph = int(bphs[i])
-                                if bph not in (1, 2, 3):
-                                    bph = 1
-                            except (TypeError, ValueError):
-                                bph = 1
-                        all_paths.append({
-                            'path_hex': ph,
-                            'bytes_per_hop': bph,
-                            'observation_count': int(obss[i]) if i < len(obss) and obss[i] else 1,
-                            'last_seen': lsns[i] if i < len(lsns) else None,
-                        })
+                # Recent advert paths for this contact (grouped from the path query above)
+                all_paths = paths_by_key.get(pk, [])
 
-                badge = self._compute_path_encoding_badge(row, all_paths, multibyte_hop_chunks)
+                badge = self._compute_path_encoding_badge(row, all_paths, chunk_buckets)
 
                 obph_raw = row['out_bytes_per_hop']
                 try:
@@ -5782,7 +5051,7 @@ class BotDataViewer:
                     mc_since_cond = ""
                     if since in datetime_offsets:
                         mc_since_cond = (
-                            f"AND last_seen >= datetime('now', {datetime_offsets[since]})"
+                            f"AND last_seen >= datetime('now', 'localtime', {datetime_offsets[since]})"
                         )
                     legacy_degree = self._compute_legacy_degree(
                         cursor, unupgraded_pks, mc_since_cond
@@ -5859,7 +5128,7 @@ class BotDataViewer:
 
                 obs_time_cond = ""
                 if since in datetime_offsets:
-                    obs_time_cond = f" AND op.last_seen >= datetime('now', {datetime_offsets[since]})"
+                    obs_time_cond = f" AND op.last_seen >= datetime('now', 'localtime', {datetime_offsets[since]})"
 
                 cursor.execute(
                     f"""
@@ -5906,7 +5175,7 @@ class BotDataViewer:
                     FROM observed_paths op
                     JOIN complete_contact_tracking c ON c.public_key = op.public_key
                     WHERE {trend_role_filter}
-                      AND op.last_seen >= datetime('now', '-30 days')
+                      AND op.last_seen >= datetime('now', 'localtime', '-30 days')
                       AND op.packet_type = 'advert'
                     GROUP BY date(op.last_seen)
                     ORDER BY obs_date
@@ -5959,8 +5228,84 @@ class BotDataViewer:
             if conn:
                 conn.close()
 
-    def _get_tracking_data(self, since='30d'):
-        """Get contact tracking data. since: 24h, 7d, 30d, 90d, or all (heard in that window)."""
+    def _get_contact_detail(self, public_key: str) -> dict:
+        """Per-contact detail loaded on demand by the contacts UI modals.
+
+        Returns the recent advert paths (same shape as the old list ``all_paths``) and the raw
+        advertisement data. Both are excluded from the /api/contacts list payload — they were
+        ~85% of its size and are only needed when a single contact is opened.
+        """
+        conn = None
+        try:
+            conn = self._get_db_connection()
+            cursor = conn.cursor()
+
+            # Recent advert paths (most-recent 50). The idx_observed_paths_advert_pk_seen covering
+            # index serves WHERE public_key=? AND packet_type='advert' ORDER BY last_seen DESC directly.
+            all_paths: list[dict[str, Any]] = []
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='observed_paths'")
+            if cursor.fetchone():
+                cursor.execute("""
+                    SELECT path_hex, path_length, bytes_per_hop, observation_count, last_seen
+                    FROM observed_paths
+                    WHERE packet_type = 'advert' AND public_key = ?
+                    ORDER BY last_seen DESC
+                    LIMIT 50
+                """, (public_key,))
+                for prow in cursor.fetchall():
+                    if not prow['path_hex']:
+                        continue
+                    bph = None
+                    if prow['bytes_per_hop'] is not None:
+                        try:
+                            bph = int(prow['bytes_per_hop'])
+                            if bph not in (1, 2, 3):
+                                bph = 1
+                        except (TypeError, ValueError):
+                            bph = 1
+                    all_paths.append({
+                        'path_hex': prow['path_hex'],
+                        'path_length': int(prow['path_length']) if prow['path_length'] is not None else 0,
+                        'bytes_per_hop': bph,
+                        'observation_count': int(prow['observation_count']) if prow['observation_count'] is not None else 1,
+                        'last_seen': prow['last_seen'] if prow['last_seen'] is not None else None,
+                    })
+
+            # Raw advertisement data for the "Advertisement Data" modal.
+            raw_advert_data = None
+            raw_advert_data_parsed = None
+            cursor.execute("""
+                SELECT raw_advert_data FROM complete_contact_tracking
+                WHERE public_key = ? ORDER BY last_heard DESC LIMIT 1
+            """, (public_key,))
+            rad_row = cursor.fetchone()
+            if rad_row and rad_row['raw_advert_data']:
+                raw_advert_data = rad_row['raw_advert_data']
+                try:
+                    import json
+                    raw_advert_data_parsed = json.loads(raw_advert_data)
+                except Exception:
+                    raw_advert_data_parsed = None
+
+            return {
+                'all_paths': all_paths,
+                'raw_advert_data': raw_advert_data,
+                'raw_advert_data_parsed': raw_advert_data_parsed,
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting contact detail: {e}")
+            return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()
+
+    def _get_tracking_data(self, since='30d', include_detail=False):
+        """Get contact tracking data. since: 24h, 7d, 30d, 90d, or all (heard in that window).
+
+        include_detail=False (the interactive /api/contacts list) omits per-contact ``all_paths``
+        and ``raw_advert_data`` to keep the payload small; the UI fetches those on demand via
+        /api/contact-detail. include_detail=True (the export endpoint) keeps the full fields.
+        """
         conn = None
         try:
             conn = self._get_db_connection()
@@ -5970,112 +5315,123 @@ class BotDataViewer:
             bot_lat = self.config.getfloat('Bot', 'bot_latitude', fallback=None)
             bot_lon = self.config.getfloat('Bot', 'bot_longitude', fallback=None)
 
-            # Filter by last_heard for performance (default: last 30 days)
-            # Note: last_heard is stored as Unix timestamp (float), so use strftime('%s', ...) for comparison
-            if since == 'all':
+            # Filter by last_heard (default: last 30 days). last_heard is stored as ISO-text
+            # datetime in LOCAL time (e.g. '2026-06-16 09:03:49.606966', written by datetime.now()),
+            # so the cutoff must also be local: datetime('now', 'localtime', ...). Using bare
+            # datetime('now', ...) computes the cutoff in UTC and shaves the local UTC offset off
+            # the window (e.g. a "24h" filter only returns ~17h of data in US/Pacific).
+            datetime_offsets = {
+                '24h': "'-24 hours'",
+                '7d':  "'-7 days'",
+                '30d': "'-30 days'",
+                '90d': "'-90 days'",
+            }
+            if since in datetime_offsets:
+                where_clause = f" WHERE c.last_heard >= datetime('now', 'localtime', {datetime_offsets[since]})"
+            else:  # 'all'
                 where_clause = ''
-                params = ()
-            else:
-                if since == '24h':
-                    where_clause = " WHERE c.last_heard >= strftime('%s', 'now', '-24 hours')"
-                elif since == '7d':
-                    where_clause = " WHERE c.last_heard >= strftime('%s', 'now', '-7 days')"
-                elif since == '30d':
-                    where_clause = " WHERE c.last_heard >= strftime('%s', 'now', '-30 days')"
-                else:  # 90d
-                    where_clause = " WHERE c.last_heard >= strftime('%s', 'now', '-90 days')"
-                params = ()
+            params = ()
 
-            # Query with LEFT JOIN to a limited set of paths per contact (max 50 most recent per contact)
-            # to keep GROUP_CONCAT and load time bounded when observed_paths is large.
+            # Fetch contacts directly (no join/group-by). The recent paths per contact are
+            # loaded in a second query below and assembled in Python. This avoids materializing
+            # a window-function CTE over all of observed_paths and grouping by every contact
+            # column (incl. the raw_advert_data blob) on every request. last_advert_timestamp is
+            # the per-contact value, so it matches the old MAX(...) over a single contact's rows.
+            detail_cols = "c.raw_advert_data," if include_detail else ""
             cursor.execute("""
-                WITH recent_paths AS (
-                    SELECT public_key, path_hex, path_length, bytes_per_hop, observation_count, last_seen,
-                           ROW_NUMBER() OVER (PARTITION BY public_key ORDER BY last_seen DESC) as rn
-                    FROM observed_paths
-                    WHERE packet_type = 'advert' AND public_key IS NOT NULL
-                )
                 SELECT
                     c.public_key, c.name, c.role, c.device_type,
                     c.latitude, c.longitude, c.city, c.state, c.country,
                     c.snr, c.hop_count, c.first_heard, c.last_heard,
                     c.advert_count, c.is_currently_tracked,
-                    c.raw_advert_data, c.signal_strength,
+                    """ + detail_cols + """
+                    c.signal_strength,
                     c.is_starred, c.out_path, c.out_path_len, c.out_bytes_per_hop,
-                    COUNT(*) as total_messages,
-                    MAX(c.last_advert_timestamp) as last_message,
-                    GROUP_CONCAT(op.path_hex, '|||') as all_paths_hex,
-                    GROUP_CONCAT(op.path_length, '|||') as all_paths_length,
-                    GROUP_CONCAT(COALESCE(op.bytes_per_hop, 1), '|||') as all_paths_bytes_per_hop,
-                    GROUP_CONCAT(op.observation_count, '|||') as all_paths_observations,
-                    GROUP_CONCAT(op.last_seen, '|||') as all_paths_last_seen
+                    c.last_advert_timestamp as last_message
                 FROM complete_contact_tracking c
-                LEFT JOIN (
-                    SELECT public_key, path_hex, path_length, bytes_per_hop, observation_count, last_seen
-                    FROM recent_paths WHERE rn <= 50
-                ) op ON c.public_key = op.public_key
                 """ + where_clause + """
-                GROUP BY c.public_key, c.name, c.role, c.device_type,
-                         c.latitude, c.longitude, c.city, c.state, c.country,
-                         c.snr, c.hop_count, c.first_heard, c.last_heard,
-                         c.advert_count, c.is_currently_tracked,
-                         c.raw_advert_data, c.signal_strength, c.is_starred,
-                         c.out_path, c.out_path_len, c.out_bytes_per_hop
                 ORDER BY c.last_heard DESC
             """, params)
 
             main_rows = cursor.fetchall()
+
+            # Fetch the 50 most recent advert paths per contact and group them in Python keyed by
+            # public_key. With idx_observed_paths_advert_pk_seen this runs as an ordered covering
+            # index scan (no temp B-tree). We don't filter to the windowed keys here: the assembly
+            # loop only looks up paths for contacts in main_rows, and adding a JOIN to the key set
+            # pushes the planner off the covering index into a much slower nested-loop plan.
+            cursor.execute("""
+                WITH recent_paths AS (
+                    SELECT public_key, path_hex, path_length, bytes_per_hop,
+                           observation_count, last_seen,
+                           ROW_NUMBER() OVER (PARTITION BY public_key ORDER BY last_seen DESC) as rn
+                    FROM observed_paths
+                    WHERE packet_type = 'advert' AND public_key IS NOT NULL
+                )
+                SELECT public_key, path_hex, path_length, bytes_per_hop, observation_count, last_seen
+                FROM recent_paths WHERE rn <= 50
+                ORDER BY public_key, last_seen DESC
+            """)
+
+            paths_by_key = {}
+            for prow in cursor.fetchall():
+                if not prow['path_hex']:  # Skip empty paths
+                    continue
+                bph = None
+                if prow['bytes_per_hop'] is not None:
+                    try:
+                        bph = int(prow['bytes_per_hop'])
+                        if bph not in (1, 2, 3):
+                            bph = 1
+                    except (TypeError, ValueError):
+                        bph = 1
+                paths_by_key.setdefault(prow['public_key'], []).append({
+                    'path_hex': prow['path_hex'],
+                    'path_length': int(prow['path_length']) if prow['path_length'] is not None else 0,
+                    'bytes_per_hop': bph,
+                    'observation_count': int(prow['observation_count']) if prow['observation_count'] is not None else 1,
+                    'last_seen': prow['last_seen'] if prow['last_seen'] is not None else None
+                })
+
             multibyte_hop_chunks = self._collect_multibyte_hop_chunks(cursor)
+            chunk_buckets = self._bucket_hop_chunks(multibyte_hop_chunks)
 
             tracking = []
             for row in main_rows:
-                # Parse raw advertisement data if available
-                raw_advert_data_parsed = None
-                if row['raw_advert_data']:
-                    try:
-                        import json
-                        raw_advert_data_parsed = json.loads(row['raw_advert_data'])
-                    except:
-                        raw_advert_data_parsed = None
-
                 # Calculate distance if both bot and contact have coordinates
                 distance = None
                 if (bot_lat is not None and bot_lon is not None and
                     row['latitude'] is not None and row['longitude'] is not None):
                     distance = self._calculate_distance(bot_lat, bot_lon, row['latitude'], row['longitude'])
 
-                # Parse all_paths from concatenated strings
-                all_paths = []
-                if row['all_paths_hex']:
-                    paths_hex = row['all_paths_hex'].split('|||')
-                    paths_length = row['all_paths_length'].split('|||') if row['all_paths_length'] else []
-                    paths_bph = row['all_paths_bytes_per_hop'].split('|||') if row['all_paths_bytes_per_hop'] else []
-                    paths_observations = row['all_paths_observations'].split('|||') if row['all_paths_observations'] else []
-                    paths_last_seen = row['all_paths_last_seen'].split('|||') if row['all_paths_last_seen'] else []
+                # Recent paths for this contact (grouped from the second query above). The full
+                # path objects are NOT sent in the list payload (they were ~70% of its size and
+                # are only used in the per-contact modal); the UI fetches them on demand via
+                # /api/contact-detail. The list only needs the count and the badge.
+                all_paths = paths_by_key.get(row['public_key'], [])
+                paths_count = len(all_paths)
 
-                    for i, path_hex in enumerate(paths_hex):
-                        if path_hex:  # Skip empty strings
-                            bph = None
-                            if i < len(paths_bph) and paths_bph[i]:
-                                try:
-                                    bph = int(paths_bph[i])
-                                    if bph not in (1, 2, 3):
-                                        bph = 1
-                                except (TypeError, ValueError):
-                                    bph = 1
-                            all_paths.append({
-                                'path_hex': path_hex,
-                                'path_length': int(paths_length[i]) if i < len(paths_length) and paths_length[i] else 0,
-                                'bytes_per_hop': bph,
-                                'observation_count': int(paths_observations[i]) if i < len(paths_observations) and paths_observations[i] else 1,
-                                'last_seen': paths_last_seen[i] if i < len(paths_last_seen) and paths_last_seen[i] else None
-                            })
+                # Preserve the legacy total_messages value: it was COUNT(*) over the LEFT-JOINed
+                # path rows, i.e. the number of paths, or 1 when a contact had no paths.
+                total_messages = max(1, paths_count)
 
                 path_encoding_badge = self._compute_path_encoding_badge(
-                    row, all_paths, multibyte_hop_chunks
+                    row, all_paths, chunk_buckets
                 )
 
-                tracking.append({
+                # The badge/tooltip decodes out_path (the "primary" path) using out_bytes_per_hop.
+                # The contact column can be stale (e.g. left at 1 while the primary path is a 3-byte
+                # path), which makes a multi-byte path render as twice/three-times as many 1-byte
+                # hops. Index the encoding on the primary observed path itself, which carries the
+                # authoritative bytes_per_hop, falling back to the contact column when unmatched.
+                out_path_val = row['out_path'] if row['out_path'] is not None else ''
+                out_bytes_per_hop_val = row['out_bytes_per_hop'] if row['out_bytes_per_hop'] is not None else None
+                if out_path_val:
+                    primary_path = next((p for p in all_paths if p['path_hex'] == out_path_val), None)
+                    if primary_path and primary_path.get('bytes_per_hop') in (1, 2, 3):
+                        out_bytes_per_hop_val = primary_path['bytes_per_hop']
+
+                entry = {
                     'user_id': row['public_key'],
                     'username': row['name'],
                     'role': row['role'],
@@ -6091,19 +5447,31 @@ class BotDataViewer:
                     'last_seen': row['last_heard'],
                     'advert_count': row['advert_count'],
                     'is_currently_tracked': row['is_currently_tracked'],
-                    'raw_advert_data': row['raw_advert_data'],
-                    'raw_advert_data_parsed': raw_advert_data_parsed,
                     'signal_strength': row['signal_strength'],
-                    'total_messages': row['total_messages'],
+                    'total_messages': total_messages,
                     'last_message': row['last_message'],
                     'distance': distance,
                     'is_starred': bool(row['is_starred'] if row['is_starred'] is not None else 0),
-                    'out_path': row['out_path'] if row['out_path'] is not None else '',
+                    'out_path': out_path_val,
                     'out_path_len': row['out_path_len'] if row['out_path_len'] is not None else -1,
-                    'out_bytes_per_hop': row['out_bytes_per_hop'] if row['out_bytes_per_hop'] is not None else None,
-                    'all_paths': all_paths,
+                    'out_bytes_per_hop': out_bytes_per_hop_val,
+                    'paths_count': paths_count,
                     'path_encoding_badge': path_encoding_badge,
-                })
+                }
+                if include_detail:
+                    # Full fidelity for the export endpoint (size-tolerant, infrequent download).
+                    raw_advert_data = row['raw_advert_data']
+                    raw_advert_data_parsed = None
+                    if raw_advert_data:
+                        try:
+                            import json
+                            raw_advert_data_parsed = json.loads(raw_advert_data)
+                        except Exception:
+                            raw_advert_data_parsed = None
+                    entry['all_paths'] = all_paths
+                    entry['raw_advert_data'] = raw_advert_data
+                    entry['raw_advert_data_parsed'] = raw_advert_data_parsed
+                tracking.append(entry)
 
             # Get server statistics for daily tracking using direct database queries
             server_stats = {}
@@ -6114,14 +5482,14 @@ class BotDataViewer:
                     # 24h: Last 24 hours of advertisements
                     cursor.execute("""
                         SELECT SUM(advert_count) FROM daily_stats
-                        WHERE date >= date('now', '-1 day')
+                        WHERE date >= date('now', 'localtime', '-1 day')
                     """)
                     server_stats['advertisements_24h'] = cursor.fetchone()[0] or 0
 
                     # 7d: Previous 6 days (excluding today)
                     cursor.execute("""
                         SELECT SUM(advert_count) FROM daily_stats
-                        WHERE date >= date('now', '-7 days') AND date < date('now')
+                        WHERE date >= date('now', 'localtime', '-7 days') AND date < date('now', 'localtime')
                     """)
                     server_stats['advertisements_7d'] = cursor.fetchone()[0] or 0
 
@@ -6136,7 +5504,7 @@ class BotDataViewer:
                     # (last_heard in last 24 hours) since daily_stats might not have today's data yet
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM complete_contact_tracking
-                        WHERE last_heard >= datetime('now', '-24 hours')
+                        WHERE last_heard >= datetime('now', 'localtime', '-24 hours')
                     """)
                     server_stats['nodes_24h'] = cursor.fetchone()[0] or 0
 
@@ -6144,7 +5512,7 @@ class BotDataViewer:
                     cursor.execute("""
                         SELECT role, COUNT(DISTINCT public_key) as count
                         FROM complete_contact_tracking
-                        WHERE last_heard >= datetime('now', '-24 hours')
+                        WHERE last_heard >= datetime('now', 'localtime', '-24 hours')
                         AND role IS NOT NULL AND role != ''
                         GROUP BY role
                     """)
@@ -6164,7 +5532,7 @@ class BotDataViewer:
 
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date >= date('now', '-7 days') AND date < date('now')
+                        WHERE date >= date('now', 'localtime', '-7 days') AND date < date('now', 'localtime')
                     """)
                     server_stats['nodes_7d'] = cursor.fetchone()[0] or 0
 
@@ -6172,7 +5540,7 @@ class BotDataViewer:
                     # Today vs 7 days ago (single day comparison)
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date = date('now', '-7 days')
+                        WHERE date = date('now', 'localtime', '-7 days')
                     """)
                     result = cursor.fetchone()
                     server_stats['nodes_7d_ago'] = result[0] if result and result[0] else 0
@@ -6180,7 +5548,7 @@ class BotDataViewer:
                     # Last 7 days vs previous 7 days (days 8-14 ago)
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date >= date('now', '-14 days') AND date < date('now', '-7 days')
+                        WHERE date >= date('now', 'localtime', '-14 days') AND date < date('now', 'localtime', '-7 days')
                     """)
                     result = cursor.fetchone()
                     server_stats['nodes_prev_7d'] = result[0] if result and result[0] else 0
@@ -6188,7 +5556,7 @@ class BotDataViewer:
                     # Last 30 days vs previous 30 days (days 31-60 ago)
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date >= date('now', '-60 days') AND date < date('now', '-30 days')
+                        WHERE date >= date('now', 'localtime', '-60 days') AND date < date('now', 'localtime', '-30 days')
                     """)
                     result = cursor.fetchone()
                     server_stats['nodes_prev_30d'] = result[0] if result and result[0] else 0
@@ -6196,13 +5564,13 @@ class BotDataViewer:
                     # Also get current period totals for comparison
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date >= date('now', '-7 days')
+                        WHERE date >= date('now', 'localtime', '-7 days')
                     """)
                     server_stats['nodes_7d'] = cursor.fetchone()[0] or 0
 
                     cursor.execute("""
                         SELECT COUNT(DISTINCT public_key) FROM daily_stats
-                        WHERE date >= date('now', '-30 days')
+                        WHERE date >= date('now', 'localtime', '-30 days')
                     """)
                     server_stats['nodes_30d'] = cursor.fetchone()[0] or 0
 
@@ -6218,7 +5586,7 @@ class BotDataViewer:
                         SELECT ds.date, c.role, COUNT(DISTINCT ds.public_key) as daily_count
                         FROM daily_stats ds
                         LEFT JOIN complete_contact_tracking c ON ds.public_key = c.public_key
-                        WHERE ds.date >= date('now', '-30 days') AND ds.date <= date('now')
+                        WHERE ds.date >= date('now', 'localtime', '-30 days') AND ds.date <= date('now', 'localtime')
                         AND (c.role IS NOT NULL AND c.role != '')
                         GROUP BY ds.date, c.role
                         ORDER BY ds.date ASC, c.role ASC
@@ -6253,7 +5621,7 @@ class BotDataViewer:
                     cursor.execute("""
                         SELECT date, COUNT(DISTINCT public_key) as daily_count
                         FROM daily_stats
-                        WHERE date >= date('now', '-30 days') AND date <= date('now')
+                        WHERE date >= date('now', 'localtime', '-30 days') AND date <= date('now', 'localtime')
                         GROUP BY date
                         ORDER BY date ASC
                     """)
@@ -7627,623 +6995,20 @@ class BotDataViewer:
             }
 
     def _decode_path_hex(self, path_hex: str, bytes_per_hop: int | None = None) -> list[dict[str, Any]]:
+        """Decode a hex path string to repeater nodes.
+
+        Thin wrapper over the shared engine (modules.path_inference.decode_path_nodes); the
+        bot `path` command and /api/mesh/resolve-path use the same implementation.
         """
-        Decode hex path string to repeater names using the same sophisticated logic as path command.
-        Returns a list of dictionaries with node_id and repeater info.
-
-        When the path came from a packet with 2-byte or 3-byte hops, pass bytes_per_hop (2 or 3)
-        so node IDs and graph selection use the correct prefix length.
-        """
-        import math
-        import re
-        from datetime import datetime
-
-        # Parse the path input - use bytes_per_hop when provided (e.g. from packet/contact)
-        if bytes_per_hop is not None and bytes_per_hop in (1, 2, 3):
-            prefix_hex_chars = bytes_per_hop * 2
-        else:
-            prefix_hex_chars = self.config.getint('Bot', 'prefix_bytes', fallback=1) * 2
-        if prefix_hex_chars <= 0:
-            prefix_hex_chars = 2
-        path_input_clean = path_hex.replace(' ', '').replace(',', '').replace(':', '')
-        if re.match(r'^[0-9a-fA-F]{4,}$', path_input_clean):
-            # Continuous hex string - split using configured prefix length
-            hex_matches = [path_input_clean[i:i+prefix_hex_chars] for i in range(0, len(path_input_clean), prefix_hex_chars)]
-            if (len(path_input_clean) % prefix_hex_chars) != 0 and prefix_hex_chars > 2:
-                hex_matches = [path_input_clean[i:i+2] for i in range(0, len(path_input_clean), 2)]
-        else:
-            # Space/comma-separated format
-            path_input = path_hex.replace(',', ' ').replace(':', ' ')
-            hex_pattern = rf'[0-9a-fA-F]{{{prefix_hex_chars}}}'
-            hex_matches = re.findall(hex_pattern, path_input)
-            if not hex_matches and prefix_hex_chars > 2:
-                hex_pattern = r'[0-9a-fA-F]{2}'
-                hex_matches = re.findall(hex_pattern, path_input)
-
-        if not hex_matches:
-            return []
-
-        # Convert to uppercase for consistency
-        node_ids = [match.upper() for match in hex_matches]
-
-        # Load Path_Command config values (same as path command)
-        geographic_guessing_enabled = False
-        bot_latitude = None
-        bot_longitude = None
-
-        try:
-            if self.config.has_section('Bot'):
-                lat = self.config.getfloat('Bot', 'bot_latitude', fallback=None)
-                lon = self.config.getfloat('Bot', 'bot_longitude', fallback=None)
-                if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
-                    bot_latitude = lat
-                    bot_longitude = lon
-                    geographic_guessing_enabled = True
-        except (ValueError, configparser.Error):  # malformed float or missing section
-            pass
-
-        self.config.get('Path_Command', 'proximity_method', fallback='simple')
-        max_proximity_range = self.config.getfloat('Path_Command', 'max_proximity_range', fallback=200.0)
-        max_repeater_age_days = self.config.getint('Path_Command', 'max_repeater_age_days', fallback=14)
-        recency_weight = self.config.getfloat('Path_Command', 'recency_weight', fallback=0.4)
-        recency_weight = max(0.0, min(1.0, recency_weight))
-        proximity_weight = 1.0 - recency_weight
-        recency_decay_half_life_hours = self.config.getfloat('Path_Command', 'recency_decay_half_life_hours', fallback=12.0)
-
-        # Check for preset first, then apply individual settings (preset can be overridden)
-        preset = self.config.get('Path_Command', 'path_selection_preset', fallback='balanced').lower()
-
-        # Apply preset defaults, then individual settings override
-        if preset == 'geographic':
-            preset_graph_confidence_threshold = 0.5
-            preset_distance_threshold = 30.0
-            preset_distance_penalty = 0.5
-            preset_final_hop_weight = 0.4
-        elif preset == 'graph':
-            preset_graph_confidence_threshold = 0.9
-            preset_distance_threshold = 50.0
-            preset_distance_penalty = 0.2
-            preset_final_hop_weight = 0.15
-        else:  # 'balanced' (default)
-            preset_graph_confidence_threshold = 0.7
-            preset_distance_threshold = 30.0
-            preset_distance_penalty = 0.3
-            preset_final_hop_weight = 0.25
-
-        graph_based_validation = self.config.getboolean('Path_Command', 'graph_based_validation', fallback=True)
-        min_edge_observations = self.config.getint('Path_Command', 'min_edge_observations', fallback=3)
-        graph_use_bidirectional = self.config.getboolean('Path_Command', 'graph_use_bidirectional', fallback=True)
-        graph_use_hop_position = self.config.getboolean('Path_Command', 'graph_use_hop_position', fallback=True)
-        graph_multi_hop_enabled = self.config.getboolean('Path_Command', 'graph_multi_hop_enabled', fallback=True)
-        graph_multi_hop_max_hops = self.config.getint('Path_Command', 'graph_multi_hop_max_hops', fallback=2)
-        graph_geographic_combined = self.config.getboolean('Path_Command', 'graph_geographic_combined', fallback=False)
-        graph_geographic_weight = self.config.getfloat('Path_Command', 'graph_geographic_weight', fallback=0.7)
-        graph_geographic_weight = max(0.0, min(1.0, graph_geographic_weight))
-        graph_confidence_override_threshold = self.config.getfloat('Path_Command', 'graph_confidence_override_threshold', fallback=preset_graph_confidence_threshold)
-        graph_confidence_override_threshold = max(0.0, min(1.0, graph_confidence_override_threshold))
-        graph_distance_penalty_enabled = self.config.getboolean('Path_Command', 'graph_distance_penalty_enabled', fallback=True)
-        graph_max_reasonable_hop_distance_km = self.config.getfloat('Path_Command', 'graph_max_reasonable_hop_distance_km', fallback=preset_distance_threshold)
-        graph_distance_penalty_strength = self.config.getfloat('Path_Command', 'graph_distance_penalty_strength', fallback=preset_distance_penalty)
-        graph_distance_penalty_strength = max(0.0, min(1.0, graph_distance_penalty_strength))
-        graph_zero_hop_bonus = self.config.getfloat('Path_Command', 'graph_zero_hop_bonus', fallback=0.4)
-        graph_zero_hop_bonus = max(0.0, min(1.0, graph_zero_hop_bonus))
-        graph_prefer_stored_keys = self.config.getboolean('Path_Command', 'graph_prefer_stored_keys', fallback=True)
-        graph_final_hop_proximity_enabled = self.config.getboolean('Path_Command', 'graph_final_hop_proximity_enabled', fallback=True)
-        graph_final_hop_proximity_weight = self.config.getfloat('Path_Command', 'graph_final_hop_proximity_weight', fallback=preset_final_hop_weight)
-        graph_final_hop_proximity_weight = max(0.0, min(1.0, graph_final_hop_proximity_weight))
-        graph_final_hop_max_distance = self.config.getfloat('Path_Command', 'graph_final_hop_max_distance', fallback=0.0)
-        graph_final_hop_proximity_normalization_km = self.config.getfloat('Path_Command', 'graph_final_hop_proximity_normalization_km', fallback=200.0)  # Long LoRa range
-        graph_final_hop_very_close_threshold_km = self.config.getfloat('Path_Command', 'graph_final_hop_very_close_threshold_km', fallback=10.0)
-        graph_final_hop_close_threshold_km = self.config.getfloat('Path_Command', 'graph_final_hop_close_threshold_km', fallback=30.0)  # Typical LoRa range
-        graph_final_hop_max_proximity_weight = self.config.getfloat('Path_Command', 'graph_final_hop_max_proximity_weight', fallback=0.6)
-        graph_final_hop_max_proximity_weight = max(0.0, min(1.0, graph_final_hop_max_proximity_weight))
-        graph_path_validation_max_bonus = self.config.getfloat('Path_Command', 'graph_path_validation_max_bonus', fallback=0.3)
-        graph_path_validation_max_bonus = max(0.0, min(1.0, graph_path_validation_max_bonus))
-        graph_path_validation_obs_divisor = self.config.getfloat('Path_Command', 'graph_path_validation_obs_divisor', fallback=50.0)
-        star_bias_multiplier = self.config.getfloat('Path_Command', 'star_bias_multiplier', fallback=2.5)
-        star_bias_multiplier = max(1.0, star_bias_multiplier)
-
-        # Use calculate_distance from utils (already imported)
-
-        # Helper: calculate recency scores
-        def calculate_recency_weighted_scores(repeaters):
-            scored_repeaters = []
-            now = datetime.now()
-
-            for repeater in repeaters:
-                most_recent_time = None
-                for field in ['last_heard', 'last_advert_timestamp', 'last_seen']:
-                    value = repeater.get(field)
-                    if value:
-                        try:
-                            if isinstance(value, str):
-                                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                            else:
-                                dt = value
-                            if most_recent_time is None or dt > most_recent_time:
-                                most_recent_time = dt
-                        except:
-                            pass
-
-                if most_recent_time is None:
-                    recency_score = 0.1
-                else:
-                    hours_ago = (now - most_recent_time).total_seconds() / 3600.0
-                    recency_score = math.exp(-hours_ago / recency_decay_half_life_hours)
-                    recency_score = max(0.0, min(1.0, recency_score))
-
-                scored_repeaters.append((repeater, recency_score))
-
-            scored_repeaters.sort(key=lambda x: x[1], reverse=True)
-            return scored_repeaters
-
-        # Helper: graph-based selection with final hop proximity and path validation
-        # When path was decoded with 2-byte or 3-byte hops, node_id/path_context have 4 or 6 hex chars;
-        # use path_prefix_hex_chars for candidate matching and normalize to graph_n for edge lookups.
-        def select_repeater_by_graph(repeaters, node_id, path_context):
-            if not graph_based_validation or not hasattr(self, 'mesh_graph') or not self.mesh_graph:
-                return None, 0.0, None
-
-            mesh_graph = self.mesh_graph
-            graph_n = prefix_hex_chars
-            path_prefix_hex_chars = len(node_id) if node_id else graph_n
-            prefix_n = path_prefix_hex_chars if path_prefix_hex_chars >= 2 else graph_n
-
-            try:
-                current_index = path_context.index(node_id) if node_id in path_context else -1
-            except Exception:
-                current_index = -1
-
-            if current_index == -1:
-                return None, 0.0, None
-
-            prev_node_id = path_context[current_index - 1] if current_index > 0 else None
-            next_node_id = path_context[current_index + 1] if current_index < len(path_context) - 1 else None
-            prev_norm = (prev_node_id[:graph_n].lower() if prev_node_id and len(prev_node_id) > graph_n else (prev_node_id.lower() if prev_node_id else None))
-            next_norm = (next_node_id[:graph_n].lower() if next_node_id and len(next_node_id) > graph_n else (next_node_id.lower() if next_node_id else None))
-
-            best_repeater = None
-            best_score = 0.0
-            best_method = None
-
-            for repeater in repeaters:
-                candidate_prefix = repeater.get('public_key', '')[:prefix_n].lower() if repeater.get('public_key') else None
-                candidate_public_key = repeater.get('public_key', '').lower() if repeater.get('public_key') else None
-                if not candidate_prefix:
-                    continue
-                candidate_norm = candidate_prefix[:graph_n].lower() if len(candidate_prefix) > graph_n else candidate_prefix
-
-                graph_score = mesh_graph.get_candidate_score(
-                    candidate_norm, prev_norm, next_norm, min_edge_observations,
-                    hop_position=current_index if graph_use_hop_position else None,
-                    use_bidirectional=graph_use_bidirectional,
-                    use_hop_position=graph_use_hop_position
-                )
-
-                stored_key_bonus = 0.0
-                if graph_prefer_stored_keys and candidate_public_key:
-                    if prev_norm:
-                        prev_to_candidate_edge = mesh_graph.get_edge(prev_norm, candidate_norm)
-                        if prev_to_candidate_edge:
-                            stored_to_key = prev_to_candidate_edge.get('to_public_key', '').lower() if prev_to_candidate_edge.get('to_public_key') else None
-                            if stored_to_key and stored_to_key == candidate_public_key:
-                                stored_key_bonus = max(stored_key_bonus, 0.4)
-
-                    if next_norm:
-                        candidate_to_next_edge = mesh_graph.get_edge(candidate_norm, next_norm)
-                        if candidate_to_next_edge:
-                            stored_from_key = candidate_to_next_edge.get('from_public_key', '').lower() if candidate_to_next_edge.get('from_public_key') else None
-                            if stored_from_key and stored_from_key == candidate_public_key:
-                                stored_key_bonus = max(stored_key_bonus, 0.4)
-
-                # Zero-hop bonus: If this repeater has been heard directly by the bot (zero-hop advert),
-                # it's strong evidence it's close and should be preferred, even for intermediate hops
-                zero_hop_bonus = 0.0
-                hop_count = repeater.get('hop_count')
-                if hop_count is not None and hop_count == 0:
-                    # This repeater has been heard directly - strong evidence it's close to bot
-                    zero_hop_bonus = graph_zero_hop_bonus
-
-                graph_score_with_bonus = min(1.0, graph_score + stored_key_bonus + zero_hop_bonus)
-
-                multi_hop_score = 0.0
-                if graph_multi_hop_enabled and graph_score_with_bonus < 0.6 and prev_norm and next_norm:
-                    intermediate_candidates = mesh_graph.find_intermediate_nodes(
-                        prev_norm, next_norm, min_edge_observations,
-                        max_hops=graph_multi_hop_max_hops
-                    )
-                    for intermediate_prefix, intermediate_score in intermediate_candidates:
-                        if intermediate_prefix == candidate_norm:
-                            multi_hop_score = intermediate_score
-                            break
-
-                candidate_score = max(graph_score_with_bonus, multi_hop_score)
-                method = 'graph_multihop' if multi_hop_score > graph_score_with_bonus else 'graph'
-
-                # Apply distance penalty for intermediate hops (prevents selecting very distant repeaters)
-                # This is especially important when graph has strong evidence for long-distance links
-                if graph_distance_penalty_enabled and next_norm is not None:  # Not final hop
-                    repeater_lat = repeater.get('latitude')
-                    repeater_lon = repeater.get('longitude')
-
-                    if repeater_lat is not None and repeater_lon is not None:
-                        max_distance = 0.0
-
-                        # Check distance from previous node to candidate (use stored edge distance if available)
-                        if prev_norm:
-                            prev_to_candidate_edge = mesh_graph.get_edge(prev_norm, candidate_norm)
-                            if prev_to_candidate_edge and prev_to_candidate_edge.get('geographic_distance'):
-                                distance = prev_to_candidate_edge.get('geographic_distance')
-                                max_distance = max(max_distance, distance)
-
-                        # Check distance from candidate to next node (use stored edge distance if available)
-                        if next_norm:
-                            candidate_to_next_edge = mesh_graph.get_edge(candidate_norm, next_norm)
-                            if candidate_to_next_edge and candidate_to_next_edge.get('geographic_distance'):
-                                distance = candidate_to_next_edge.get('geographic_distance')
-                                max_distance = max(max_distance, distance)
-
-                        # Apply penalty if distance exceeds reasonable hop distance
-                        if max_distance > graph_max_reasonable_hop_distance_km:
-                            excess_distance = max_distance - graph_max_reasonable_hop_distance_km
-                            normalized_excess = min(excess_distance / graph_max_reasonable_hop_distance_km, 1.0)
-                            penalty = normalized_excess * graph_distance_penalty_strength
-                            candidate_score = candidate_score * (1.0 - penalty)
-                        elif max_distance > 0:
-                            # Even if under threshold, very long hops should get a small penalty
-                            if max_distance > graph_max_reasonable_hop_distance_km * 0.8:
-                                small_penalty = (max_distance - graph_max_reasonable_hop_distance_km * 0.8) / (graph_max_reasonable_hop_distance_km * 0.2) * graph_distance_penalty_strength * 0.5
-                                candidate_score = candidate_score * (1.0 - small_penalty)
-
-                # For final hop (next_norm is None), add bot location proximity bonus
-                # This is critical for final hop selection - the last repeater before the bot should be close
-                if next_norm is None and graph_final_hop_proximity_enabled:
-                    if bot_latitude is not None and bot_longitude is not None:
-                        repeater_lat = repeater.get('latitude')
-                        repeater_lon = repeater.get('longitude')
-
-                        if repeater_lat is not None and repeater_lon is not None:
-                            distance = calculate_distance(bot_latitude, bot_longitude, repeater_lat, repeater_lon)
-
-                            if graph_final_hop_max_distance > 0 and distance > graph_final_hop_max_distance:
-                                # Beyond max distance - significantly penalize this candidate for final hop
-                                candidate_score *= 0.3  # Heavy penalty for distant final hop
-                            else:
-                                # Normalize distance to 0-1 score (inverse: closer = higher score)
-                                # Use configurable normalization distance (default 500km for more aggressive scoring)
-                                normalized_distance = min(distance / graph_final_hop_proximity_normalization_km, 1.0)
-                                proximity_score = 1.0 - normalized_distance
-
-                                # For final hop, use a higher effective weight to ensure proximity matters more
-                                # The configured weight is a minimum; we boost it for very close repeaters
-                                effective_weight = graph_final_hop_proximity_weight
-                                if distance < graph_final_hop_very_close_threshold_km:
-                                    # Very close - boost weight up to max
-                                    effective_weight = min(graph_final_hop_max_proximity_weight, graph_final_hop_proximity_weight * 2.0)
-                                elif distance < graph_final_hop_close_threshold_km:
-                                    # Close - moderate boost
-                                    effective_weight = min(0.5, graph_final_hop_proximity_weight * 1.5)
-
-                                # Combine with graph score using effective weight
-                                candidate_score = candidate_score * (1.0 - effective_weight) + proximity_score * effective_weight
-
-                # Path validation bonus: Check if candidate's stored paths match the current path context
-                # This is especially important for prefix collision resolution
-                path_validation_bonus = 0.0
-                if candidate_public_key and len(path_context) > 1:
-                    try:
-                        query = '''
-                            SELECT path_hex, observation_count, last_seen, from_prefix, to_prefix, bytes_per_hop
-                            FROM observed_paths
-                            WHERE public_key = ? AND packet_type = 'advert'
-                            ORDER BY observation_count DESC, last_seen DESC
-                            LIMIT 10
-                        '''
-                        stored_paths = self.db_manager.execute_query(query, (candidate_public_key,))
-
-                        if stored_paths:
-                            decoded_path_hex = ''.join([node.lower() for node in path_context])
-                            # Build the path prefix up to (but not including) the current node
-                            # This helps match paths where the candidate appears at the same position
-                            path_prefix_up_to_current = ''.join([node.lower() for node in path_context[:current_index]])
-
-                            for stored_path in stored_paths:
-                                stored_hex = stored_path.get('path_hex', '').lower()
-                                obs_count = stored_path.get('observation_count', 1)
-
-                                if stored_hex:
-                                    n = (stored_path.get('bytes_per_hop') or 1) * 2
-                                    if n <= 0:
-                                        n = 2
-                                    stored_nodes = [stored_hex[i:i+n] for i in range(0, len(stored_hex), n)]
-                                    if (len(stored_hex) % n) != 0:
-                                        stored_nodes = [stored_hex[i:i+2] for i in range(0, len(stored_hex), 2)]
-                                    decoded_nodes = path_context if path_context else [decoded_path_hex[i:i+n] for i in range(0, len(decoded_path_hex), n)]
-
-                                    # Check for exact path match (full path)
-                                    common_segments = 0
-                                    min_len = min(len(stored_nodes), len(decoded_nodes))
-                                    for i in range(min_len):
-                                        if stored_nodes[i] == decoded_nodes[i]:
-                                            common_segments += 1
-                                        else:
-                                            break
-
-                                    # Also check if stored path starts with the same prefix as the decoded path up to current position
-                                    # This is important for matching paths where the candidate appears at the same position
-                                    prefix_match = False
-                                    if path_prefix_up_to_current and len(stored_hex) >= len(path_prefix_up_to_current):
-                                        if stored_hex.startswith(path_prefix_up_to_current):
-                                            # The stored path has the same prefix, and the candidate appears at the same position
-                                            # This is a strong indicator of a match
-                                            prefix_match = True
-
-                                    if common_segments >= 2 or prefix_match:
-                                        # Stronger bonus for prefix matches (indicates same path structure)
-                                        if prefix_match and common_segments >= current_index:
-                                            segment_bonus = min(graph_path_validation_max_bonus, 0.1 * (current_index + 1))
-                                        else:
-                                            segment_bonus = min(0.2, 0.05 * common_segments)
-                                        obs_bonus = min(0.15, obs_count / graph_path_validation_obs_divisor)
-                                        path_validation_bonus = max(path_validation_bonus, segment_bonus + obs_bonus)
-                                        # Cap at max bonus
-                                        path_validation_bonus = min(graph_path_validation_max_bonus, path_validation_bonus)
-                                        if path_validation_bonus >= graph_path_validation_max_bonus * 0.9:
-                                            break  # Strong match found, no need to check more
-                    except (sqlite3.Error, OSError, KeyError, ValueError) as _score_err:
-                        self.logger.debug("Path-scoring graph query failed: %s", _score_err)
-
-                candidate_score = min(1.0, candidate_score + path_validation_bonus)
-
-                if repeater.get('is_starred', False):
-                    candidate_score *= star_bias_multiplier
-
-                if candidate_score > best_score:
-                    best_score = candidate_score
-                    best_repeater = repeater
-                    best_method = method
-
-            if best_repeater and best_score > 0.0:
-                confidence = min(1.0, best_score) if best_score <= 1.0 else 0.95 + (min(0.05, (best_score - 1.0) / star_bias_multiplier))
-                return best_repeater, confidence, best_method or 'graph'
-
-            return None, 0.0, None
-
-        # Helper: simple proximity selection
-        def select_by_simple_proximity(repeaters_with_location):
-            scored_repeaters = calculate_recency_weighted_scores(repeaters_with_location)
-            min_recency_threshold = 0.01
-            scored_repeaters = [(r, score) for r, score in scored_repeaters if score >= min_recency_threshold]
-
-            if not scored_repeaters:
-                return None, 0.0
-
-            if len(scored_repeaters) == 1:
-                repeater, recency_score = scored_repeaters[0]
-                distance = calculate_distance(bot_latitude, bot_longitude, repeater['latitude'], repeater['longitude'])
-                if max_proximity_range > 0 and distance > max_proximity_range:
-                    return None, 0.0
-                base_confidence = 0.4 + (recency_score * 0.5)
-                return repeater, base_confidence
-
-            combined_scores = []
-            for repeater, recency_score in scored_repeaters:
-                distance = calculate_distance(bot_latitude, bot_longitude, repeater['latitude'], repeater['longitude'])
-                if max_proximity_range > 0 and distance > max_proximity_range:
-                    continue
-
-                normalized_distance = min(distance / 1000.0, 1.0)
-                proximity_score = 1.0 - normalized_distance
-                combined_score = (recency_score * recency_weight) + (proximity_score * proximity_weight)
-
-                if repeater.get('is_starred', False):
-                    combined_score *= star_bias_multiplier
-
-                combined_scores.append((combined_score, distance, repeater))
-
-            if not combined_scores:
-                return None, 0.0
-
-            combined_scores.sort(key=lambda x: x[0], reverse=True)
-            best_score, best_distance, best_repeater = combined_scores[0]
-
-            if len(combined_scores) == 1:
-                confidence = 0.4 + (best_score * 0.5)
-            else:
-                second_best_score = combined_scores[1][0]
-                score_ratio = best_score / second_best_score if second_best_score > 0 else 1.0
-                if score_ratio > 1.5:
-                    confidence = 0.9
-                elif score_ratio > 1.2:
-                    confidence = 0.8
-                elif score_ratio > 1.1:
-                    confidence = 0.7
-                else:
-                    confidence = 0.5
-
-            return best_repeater, confidence
-
-        # Main decoding logic (same as path command)
-        decoded_path = []
-
-        try:
-            for node_id in node_ids:
-                # Query database for matching repeaters
-                if max_repeater_age_days > 0:
-                    query = f'''
-                        SELECT name, public_key, device_type, last_heard, last_heard as last_seen,
-                               last_advert_timestamp, latitude, longitude, city, state, country,
-                               advert_count, signal_strength, hop_count, role, is_starred
-                        FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND role IN ('repeater', 'roomserver')
-                        AND (
-                            (last_advert_timestamp IS NOT NULL AND last_advert_timestamp >= datetime('now', '-{max_repeater_age_days} days'))
-                            OR (last_advert_timestamp IS NULL AND last_heard >= datetime('now', '-{max_repeater_age_days} days'))
-                        )
-                        ORDER BY COALESCE(last_advert_timestamp, last_heard) DESC
-                    '''
-                else:
-                    query = '''
-                        SELECT name, public_key, device_type, last_heard, last_heard as last_seen,
-                               last_advert_timestamp, latitude, longitude, city, state, country,
-                               advert_count, signal_strength, hop_count, role, is_starred
-                        FROM complete_contact_tracking
-                        WHERE public_key LIKE ? AND role IN ('repeater', 'roomserver')
-                        ORDER BY COALESCE(last_advert_timestamp, last_heard) DESC
-                    '''
-
-                results = self.db_manager.execute_query(query, (f"{node_id}%",))
-
-                if results:
-                    repeaters_data = [
-                        {
-                            'name': row['name'],
-                            'public_key': row['public_key'],
-                            'device_type': row['device_type'],
-                            'last_seen': row['last_seen'],
-                            'last_heard': row.get('last_heard', row['last_seen']),
-                            'last_advert_timestamp': row.get('last_advert_timestamp'),
-                            'is_active': True,
-                            'latitude': row['latitude'],
-                            'longitude': row['longitude'],
-                            'city': row['city'],
-                            'state': row['state'],
-                            'country': row['country'],
-                            'hop_count': row.get('hop_count'),  # Include hop_count for zero-hop bonus
-                            'is_starred': bool(row.get('is_starred', 0))
-                        } for row in results
-                    ]
-
-                    if len(repeaters_data) == 1:
-                        recent_repeaters = repeaters_data
-                    else:
-                        scored_repeaters = calculate_recency_weighted_scores(repeaters_data)
-                        min_recency_threshold = 0.01
-                        recent_repeaters = [
-                            r for r, score in scored_repeaters if score >= min_recency_threshold
-                        ]
-
-                    if len(recent_repeaters) > 1:
-                        # Multiple matches - use graph and geographic selection
-                        graph_repeater = None
-                        graph_confidence = 0.0
-                        selection_method = None
-                        geo_repeater = None
-                        geo_confidence = 0.0
-
-                        if graph_based_validation and hasattr(self, 'mesh_graph') and self.mesh_graph:
-                            graph_repeater, graph_confidence, selection_method = select_repeater_by_graph(
-                                recent_repeaters, node_id, node_ids
-                            )
-
-                        if geographic_guessing_enabled:
-                            repeaters_with_location = [r for r in recent_repeaters if r.get('latitude') and r.get('longitude')]
-                            if repeaters_with_location:
-                                geo_repeater, geo_confidence = select_by_simple_proximity(repeaters_with_location)
-
-                        # Combine or choose
-                        selected_repeater = None
-                        confidence = 0.0
-
-                        if graph_geographic_combined and graph_repeater and geo_repeater:
-                            graph_pubkey = graph_repeater.get('public_key', '')
-                            geo_pubkey = geo_repeater.get('public_key', '')
-
-                            if graph_pubkey and geo_pubkey and graph_pubkey == geo_pubkey:
-                                combined_confidence = (
-                                    graph_confidence * graph_geographic_weight +
-                                    geo_confidence * (1.0 - graph_geographic_weight)
-                                )
-                                selected_repeater = graph_repeater
-                                confidence = combined_confidence
-                            else:
-                                if graph_confidence > geo_confidence:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-                                else:
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                        else:
-                            # For final hop, prefer geographic selection if available and reasonable
-                            # The final hop should be close to the bot, so geographic proximity is very important
-                            is_final_hop = (node_id == node_ids[-1] if node_ids else False)
-
-                            if is_final_hop and geo_repeater and geo_confidence >= 0.6:
-                                # For final hop, prefer geographic if it has decent confidence
-                                # This ensures we pick the closest repeater for the last hop
-                                if not graph_repeater or geo_confidence >= graph_confidence * 0.9:
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                                elif graph_repeater:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-                            elif graph_repeater and graph_confidence >= graph_confidence_override_threshold:
-                                selected_repeater = graph_repeater
-                                confidence = graph_confidence
-                            elif not graph_repeater or graph_confidence < graph_confidence_override_threshold:
-                                if geo_repeater and (not graph_repeater or geo_confidence > graph_confidence):
-                                    selected_repeater = geo_repeater
-                                    confidence = geo_confidence
-                                elif graph_repeater:
-                                    selected_repeater = graph_repeater
-                                    confidence = graph_confidence
-
-                        if selected_repeater and confidence >= 0.5:
-                            decoded_path.append({
-                                'node_id': node_id,
-                                'name': selected_repeater['name'],
-                                'public_key': selected_repeater['public_key'],
-                                'device_type': selected_repeater['device_type'],
-                                'role': selected_repeater.get('role', 'repeater'),
-                                'found': True,
-                                'geographic_guess': confidence < 0.8,  # Mark as guess if confidence is lower
-                                'collision': True,
-                                'matches': len(recent_repeaters)
-                            })
-                        else:
-                            # Fallback to first repeater if selection failed
-                            decoded_path.append({
-                                'node_id': node_id,
-                                'name': recent_repeaters[0]['name'],
-                                'public_key': recent_repeaters[0]['public_key'],
-                                'device_type': recent_repeaters[0]['device_type'],
-                                'role': recent_repeaters[0].get('role', 'repeater'),
-                                'found': True,
-                                'geographic_guess': True,
-                                'collision': True,
-                                'matches': len(recent_repeaters)
-                            })
-                    elif len(recent_repeaters) == 1:
-                        # Single match - high confidence
-                        repeater = recent_repeaters[0]
-                        decoded_path.append({
-                            'node_id': node_id,
-                            'name': repeater['name'],
-                            'public_key': repeater['public_key'],
-                            'device_type': repeater['device_type'],
-                            'role': repeater.get('role', 'repeater'),
-                            'found': True,
-                            'geographic_guess': False,
-                            'collision': False,
-                            'matches': 1
-                        })
-                    else:
-                        decoded_path.append({
-                            'node_id': node_id,
-                            'name': None,
-                            'found': False
-                        })
-                else:
-                    decoded_path.append({
-                        'node_id': node_id,
-                        'name': None,
-                        'found': False
-                    })
-        except Exception as e:
-            self.logger.error(f"Error decoding path: {e}", exc_info=True)
-            return []
-
-        return decoded_path
+        from modules.path_inference import decode_path_nodes
+        return decode_path_nodes(
+            path_hex,
+            bytes_per_hop,
+            config=self.config,
+            db_manager=self.db_manager,
+            logger=self.logger,
+            mesh_graph=getattr(self, "mesh_graph", None),
+        )
 
     def run(self, host='127.0.0.1', port=8080, debug=False):
         """Run the modern web viewer"""

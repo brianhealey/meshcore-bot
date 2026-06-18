@@ -490,6 +490,25 @@ def _m0012_purging_log_details_column(cursor: sqlite3.Cursor) -> None:
         _add_column(cursor, "purging_log", "details", "TEXT")
 
 
+def _m0013_observed_paths_advert_covering_index(cursor: sqlite3.Cursor) -> None:
+    """Covering index for the contacts-page recent-advert-paths window query.
+
+    Lets the ROW_NUMBER() OVER (PARTITION BY public_key ORDER BY last_seen DESC)
+    scan in the contacts API run as an ordered index scan over advert rows,
+    avoiding a full materialization + temp B-tree sort of observed_paths.
+    """
+    if not _table_exists(cursor, "observed_paths"):
+        return
+    cursor.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_observed_paths_advert_pk_seen
+            ON observed_paths(public_key, last_seen DESC, path_hex, path_length,
+                              bytes_per_hop, observation_count)
+            WHERE packet_type = 'advert';
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # Migration registry — append new entries here, never remove or reorder.
 # ---------------------------------------------------------------------------
@@ -509,6 +528,7 @@ MIGRATIONS: list[MigrationEntry] = [
     (10, "create repeater/graph tables", _m0010_create_repeater_and_graph_tables),
     (11, "repeater/graph indexes", _m0011_repeater_and_graph_indexes),
     (12, "purging_log: add details column", _m0012_purging_log_details_column),
+    (13, "observed_paths: advert covering index for contacts page", _m0013_observed_paths_advert_covering_index),
 ]
 
 

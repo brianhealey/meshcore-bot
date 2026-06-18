@@ -52,6 +52,13 @@ class MeshGraph:
         self._outgoing_index: dict[str, set[str]] = defaultdict(set)  # from_prefix -> set of to_prefixes
         self._incoming_index: dict[str, set[str]] = defaultdict(set)  # to_prefix -> set of from_prefixes
 
+        # First-byte (2 hex chars) buckets over the adjacency indexes, so prefix-match lookups scan
+        # only nodes sharing the query's first byte instead of every node. A prefix can only
+        # _prefix_match a query if they share their first byte (all prefixes are >= 1 byte and one is
+        # a prefix of the other), so bucketing by [:2] is exact. Kept in sync via _index_add/_remove.
+        self._outgoing_byte0: dict[str, set[str]] = defaultdict(set)  # from_prefix[:2] -> set of from_prefixes
+        self._incoming_byte0: dict[str, set[str]] = defaultdict(set)  # to_prefix[:2] -> set of to_prefixes
+
         # Per-edge last-notification timestamps for web viewer throttling (unix float)
         self._notification_timestamps: dict[tuple[str, str], float] = {}
 
@@ -127,11 +134,19 @@ class MeshGraph:
         if not from_q or not to_q:
             return []
 
+        # Only from-nodes sharing from_q's first byte can prefix-match it, so scan just that bucket
+        # rather than every from-node (and never the full edge set). Same candidate set as a full
+        # scan (indexes mirror self.edges), but O(bucket + matched). This is the hot path for
+        # get_edge()'s prefix fallback during graph path inference.
         candidates: list[tuple[tuple[str, str], dict]] = []
-        for edge_key, edge in self.edges.items():
-            from_p, to_p = edge_key
-            if self._prefix_match(from_p, from_q) and self._prefix_match(to_p, to_q):
-                candidates.append((edge_key, edge))
+        for from_p in self._outgoing_byte0.get(from_q[:2], ()):
+            if not self._prefix_match(from_p, from_q):
+                continue
+            for to_p in self._outgoing_index[from_p]:
+                if to_p[:2] == to_q[:2] and self._prefix_match(to_p, to_q):
+                    edge = self.edges.get((from_p, to_p))
+                    if edge is not None:
+                        candidates.append(((from_p, to_p), edge))
 
         if not candidates:
             return []
@@ -153,6 +168,37 @@ class MeshGraph:
         candidates.sort(key=sort_key)
         return candidates
 
+    def _index_add(self, from_p: str, to_p: str) -> None:
+        """Register an edge in all adjacency indexes (both directions + first-byte buckets).
+
+        Single point of truth for index maintenance — call whenever self.edges gains a key.
+        """
+        self._outgoing_index[from_p].add(to_p)
+        self._incoming_index[to_p].add(from_p)
+        self._outgoing_byte0[from_p[:2]].add(from_p)
+        self._incoming_byte0[to_p[:2]].add(to_p)
+
+    def _index_remove(self, from_p: str, to_p: str) -> None:
+        """Unregister an edge from all adjacency indexes, pruning now-empty buckets.
+
+        Call whenever self.edges loses a key. The byte0 buckets are only pruned of a node once it
+        has no remaining edges in the corresponding direction.
+        """
+        if from_p in self._outgoing_index:
+            self._outgoing_index[from_p].discard(to_p)
+            if not self._outgoing_index[from_p]:
+                del self._outgoing_index[from_p]
+                self._outgoing_byte0[from_p[:2]].discard(from_p)
+                if not self._outgoing_byte0[from_p[:2]]:
+                    del self._outgoing_byte0[from_p[:2]]
+        if to_p in self._incoming_index:
+            self._incoming_index[to_p].discard(from_p)
+            if not self._incoming_index[to_p]:
+                del self._incoming_index[to_p]
+                self._incoming_byte0[to_p[:2]].discard(to_p)
+                if not self._incoming_byte0[to_p[:2]]:
+                    del self._incoming_byte0[to_p[:2]]
+
     def _remove_edge_from_memory(self, edge_key: tuple[str, str]) -> None:
         """Remove an edge from in-memory graph and adjacency indexes.
         Does not touch the database. Used when promoting to a higher-resolution key.
@@ -161,14 +207,7 @@ class MeshGraph:
             return
         from_p, to_p = edge_key
         del self.edges[edge_key]
-        if from_p in self._outgoing_index:
-            self._outgoing_index[from_p].discard(to_p)
-            if not self._outgoing_index[from_p]:
-                del self._outgoing_index[from_p]
-        if to_p in self._incoming_index:
-            self._incoming_index[to_p].discard(from_p)
-            if not self._incoming_index[to_p]:
-                del self._incoming_index[to_p]
+        self._index_remove(from_p, to_p)
         self._notification_timestamps.pop(edge_key, None)
 
     def _delete_edge_from_db(
@@ -268,8 +307,7 @@ class MeshGraph:
                 }
 
                 # Maintain adjacency indexes
-                self._outgoing_index[from_prefix].add(to_prefix)
-                self._incoming_index[to_prefix].add(from_prefix)
+                self._index_add(from_prefix, to_prefix)
 
                 edge_count += 1
 
@@ -401,8 +439,7 @@ class MeshGraph:
                     "geographic_distance": geographic_distance if geographic_distance is not None else best_edge.get("geographic_distance"),
                     "confirmed_2byte": True if prefix_bytes == 2 else best_edge.get("confirmed_2byte", False),
                 }
-                self._outgoing_index[from_prefix].add(to_prefix)
-                self._incoming_index[to_prefix].add(from_prefix)
+                self._index_add(from_prefix, to_prefix)
 
                 self._persist_and_notify_edge(edge_key, is_new_edge=True)
                 return
@@ -454,8 +491,7 @@ class MeshGraph:
                 'geographic_distance': geographic_distance,
                 'confirmed_2byte': prefix_bytes == 2,
             }
-            self._outgoing_index[from_prefix].add(to_prefix)
-            self._incoming_index[to_prefix].add(from_prefix)
+            self._index_add(from_prefix, to_prefix)
             is_new_edge = True
 
         self._persist_and_notify_edge(edge_key, is_new_edge)
@@ -934,14 +970,7 @@ class MeshGraph:
             from_prefix, to_prefix = edge_key
             del self.edges[edge_key]
             # Clean up adjacency indexes
-            if from_prefix in self._outgoing_index:
-                self._outgoing_index[from_prefix].discard(to_prefix)
-                if not self._outgoing_index[from_prefix]:
-                    del self._outgoing_index[from_prefix]
-            if to_prefix in self._incoming_index:
-                self._incoming_index[to_prefix].discard(from_prefix)
-                if not self._incoming_index[to_prefix]:
-                    del self._incoming_index[to_prefix]
+            self._index_remove(from_prefix, to_prefix)
             # Drop stale notification timestamp if present
             self._notification_timestamps.pop(edge_key, None)
 
@@ -1081,9 +1110,15 @@ class MeshGraph:
         if not prefix:
             return []
         result = []
-        for edge in self.edges.values():
-            if self._prefix_match(edge['from_prefix'], prefix):
-                result.append(edge)
+        # Only from-nodes sharing prefix's first byte can prefix-match it, so scan just that bucket
+        # of the adjacency index rather than every from-node. O(bucket + matched); identical edge
+        # set (indexes mirror self.edges).
+        for from_p in self._outgoing_byte0.get(prefix[:2], ()):
+            if self._prefix_match(from_p, prefix):
+                for to_p in self._outgoing_index[from_p]:
+                    edge = self.edges.get((from_p, to_p))
+                    if edge is not None:
+                        result.append(edge)
         return result
 
     def get_incoming_edges(self, prefix: str) -> list[dict]:
@@ -1099,9 +1134,14 @@ class MeshGraph:
         if not prefix:
             return []
         result = []
-        for edge in self.edges.values():
-            if self._prefix_match(edge['to_prefix'], prefix):
-                result.append(edge)
+        # Only to-nodes sharing prefix's first byte can prefix-match it, so scan just that bucket
+        # of the adjacency index rather than every to-node. O(bucket + matched).
+        for to_p in self._incoming_byte0.get(prefix[:2], ()):
+            if self._prefix_match(to_p, prefix):
+                for from_p in self._incoming_index[to_p]:
+                    edge = self.edges.get((from_p, to_p))
+                    if edge is not None:
+                        result.append(edge)
         return result
 
     def validate_path_segment(self, from_prefix: str, to_prefix: str,

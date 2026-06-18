@@ -230,8 +230,11 @@ class TestApiExportContacts:
                 "NY",
                 "USA",
                 -12.5,
-                time.time() - 86400,
-                time.time(),
+                # last_heard/first_heard are stored as local ISO-text datetimes in production
+                # (written via datetime.now()); the contacts time filter compares against
+                # datetime('now', 'localtime', ...), so seed matching ISO text within the window.
+                time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - 86400)),
+                time.strftime('%Y-%m-%d %H:%M:%S'),
                 5,
                 0,
             ))

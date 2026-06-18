@@ -178,41 +178,50 @@ class ESPNClient:
 
                 states = []
                 for event in data.get('events', []):
-                    competition = event.get('competitions', [{}])[0]
-                    competitors = competition.get('competitors', [])
-                    if len(competitors) != 2:
-                        continue
-                    home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
-                    away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
-                    status_obj = competition.get('status', event.get('status', {}))
-
-                    goals = []
-                    for det in competition.get('details', []):
-                        if not det.get('scoringPlay') or det.get('shootout'):
+                    # Parse each event defensively: a single malformed event/detail must not
+                    # wipe out the whole batch (which would silence the live-score service).
+                    try:
+                        competition = (event.get('competitions') or [{}])[0]
+                        competitors = competition.get('competitors') or []
+                        if len(competitors) != 2:
                             continue
-                        athletes = det.get('athletesInvolved') or []
-                        goals.append({
-                            'clock': det.get('clock', {}).get('displayValue', ''),
-                            'scorer': athletes[0].get('displayName', '') if athletes else '',
-                            'team_id': str(det.get('team', {}).get('id', '')),
-                            'own_goal': bool(det.get('ownGoal')),
-                            'penalty': bool(det.get('penaltyKick')),
-                        })
+                        home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
+                        away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
+                        status_obj = competition.get('status') or event.get('status') or {}
 
-                    states.append({
-                        'id': str(event.get('id', '')),
-                        'home_id': str(home.get('team', {}).get('id', '')),
-                        'away_id': str(away.get('team', {}).get('id', '')),
-                        'home_name': home.get('team', {}).get('displayName', home.get('team', {}).get('name', '?')),
-                        'away_name': away.get('team', {}).get('displayName', away.get('team', {}).get('name', '?')),
-                        'home_score': self._score_int(home),
-                        'away_score': self._score_int(away),
-                        'status': status_obj.get('type', {}).get('name', 'UNKNOWN'),
-                        'clock': status_obj.get('displayClock', ''),
-                        'home_pen': self.extract_shootout_score(home),
-                        'away_pen': self.extract_shootout_score(away),
-                        'goals': goals,
-                    })
+                        goals = []
+                        for det in (competition.get('details') or []):
+                            if not det.get('scoringPlay') or det.get('shootout'):
+                                continue
+                            athletes = det.get('athletesInvolved') or []
+                            scorer = athletes[0].get('displayName', '') if athletes and isinstance(athletes[0], dict) else ''
+                            goals.append({
+                                'clock': (det.get('clock') or {}).get('displayValue', ''),
+                                'scorer': scorer,
+                                'team_id': str((det.get('team') or {}).get('id', '')),
+                                'own_goal': bool(det.get('ownGoal')),
+                                'penalty': bool(det.get('penaltyKick')),
+                            })
+
+                        home_team = home.get('team') or {}
+                        away_team = away.get('team') or {}
+                        states.append({
+                            'id': str(event.get('id', '')),
+                            'home_id': str(home_team.get('id', '')),
+                            'away_id': str(away_team.get('id', '')),
+                            'home_name': home_team.get('displayName') or home_team.get('name') or '?',
+                            'away_name': away_team.get('displayName') or away_team.get('name') or '?',
+                            'home_score': self._score_int(home),
+                            'away_score': self._score_int(away),
+                            'status': (status_obj.get('type') or {}).get('name', 'UNKNOWN'),
+                            'clock': status_obj.get('displayClock', ''),
+                            'home_pen': self.extract_shootout_score(home),
+                            'away_pen': self.extract_shootout_score(away),
+                            'goals': goals,
+                        })
+                    except Exception as e:
+                        self.logger.warning(f"ESPN fetch_match_states: skipping malformed event {event.get('id')}: {e}")
+                        continue
                 return states
         except Exception as e:
             self.logger.error(f"ESPN fetch_match_states error for {sport}/{league}: {e}")

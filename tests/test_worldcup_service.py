@@ -52,7 +52,9 @@ GROUPS = {"100": "Group E", "200": "Group E"}
 
 class TestDetect:
     def _detect(self, svc, prev, m, in_group=True):
-        cur = {"h": m["home_score"], "a": m["away_score"], "s": m["status"]}
+        committed = min(len(m.get("goals") or []), m["home_score"] + m["away_score"])
+        cur = {"h": m["home_score"], "a": m["away_score"], "s": m["status"], "g": committed,
+               "lg": prev.get("lg")}
         return svc._detect(prev, cur, m, in_group, GROUPS, "Round of 32")
 
     def test_kickoff(self):
@@ -61,11 +63,21 @@ class TestDetect:
         m = _match(status="STATUS_FIRST_HALF")
         assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire vs Ecuador (kick-off)"
 
-    def test_goal_with_minute(self):
+    def test_goal_detail_before_score_not_announced(self):
+        # A scoring play can appear before the score updates (or while under VAR review).
+        # The score is still 0-0, so do not announce a phantom goal.
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF", "g": 0}
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", clock="17'", goals=[_goal("17'", "Lionel Messi")])
+        assert self._detect(svc, prev, m) is None
+
+    def test_goal_old_state_uses_score_baseline(self):
+        # State saved before the scorer feature has no "g"; the prior score total is the
+        # baseline, so a real new goal is announced (named), not replayed or dropped.
         svc = _svc()
         prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF"}
-        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="23'")
-        assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (23')"
+        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="23'", goals=[_goal("23'", "Erling Haaland")])
+        assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (23' Erling Haaland)"
 
     def test_goal_names_new_scorer(self):
         svc = _svc()
@@ -88,16 +100,49 @@ class TestDetect:
                    goals=[_goal("7'", "A. One"), _goal("20'", "B. Two")])
         assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 2, Ecuador 0 (7' A. One; 20' B. Two)"
 
-    def test_goal_falls_back_to_clock_without_details(self):
+    def test_goal_without_details_not_announced(self):
+        # Score moved but no scoring-play detail yet (ESPN lag): wait for the named detail
+        # rather than posting an unnamed update now (it would double-post when it arrives).
         svc = _svc()
         prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF", "g": 0}
-        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="12'")  # no goals payload
-        assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (12')"
+        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="12'")  # no goals payload yet
+        assert self._detect(svc, prev, m) is None
 
-    def test_var_removed_goal_not_announced(self):
+    def test_goal_announced_when_detail_arrives_after_score(self):
+        # The poll after the score ticked, the named scoring play appears -> announce it,
+        # showing the (already-updated) score.
         svc = _svc()
-        prev = {"h": 1, "a": 0, "s": "STATUS_FIRST_HALF", "g": 1}
-        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", clock="15'", goals=[])
+        prev = {"h": 1, "a": 0, "s": "STATUS_FIRST_HALF", "g": 0}  # score already 1-0, no detail yet
+        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="13'", goals=[_goal("12'", "Erling Haaland")])
+        assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (12' Erling Haaland)"
+
+    def test_disallowed_goal_names_scorer(self):
+        # A previously-announced goal is rescinded (score reverts, scoring play removed).
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_FIRST_HALF", "g": 1, "lg": "60' Lionel Messi"}
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", goals=[])
+        assert self._detect(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — 60' Lionel Messi ruled out (VAR)"
+
+    def test_disallowed_goal_generic_when_scorer_unknown(self):
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_FIRST_HALF", "g": 1}  # no remembered scorer
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", goals=[])
+        assert self._detect(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — goal ruled out (VAR)"
+
+    def test_disallowed_can_be_toggled_off(self):
+        svc = _svc(announce_disallowed="false")
+        prev = {"h": 1, "a": 0, "s": "STATUS_FIRST_HALF", "g": 1, "lg": "60' Lionel Messi"}
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", goals=[])
+        assert self._detect(svc, prev, m) is None
+
+    def test_phantom_play_removed_is_not_a_disallowed(self):
+        # A play that was never announced (committed stayed 0) being removed must NOT
+        # produce a "ruled out" message.
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF", "g": 0}
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", goals=[])
         assert self._detect(svc, prev, m) is None
 
     def test_halftime(self):
@@ -154,13 +199,15 @@ class TestTick:
         await svc._tick()
         svc.bot.command_manager.send_channel_message.assert_not_awaited()
 
-        # Second poll: a goal -> announced
-        svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(h=1, a=0, status="STATUS_FIRST_HALF", clock="12'")])
+        # Second poll: a goal (with scoring-play detail) -> announced with scorer
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[
+            _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="12'", goals=[_goal("12'", "Erling Haaland")])
+        ])
         await svc._tick()
         svc.bot.command_manager.send_channel_message.assert_awaited_once()
         args = svc.bot.command_manager.send_channel_message.await_args.args
         assert args[0] == "#fifa"
-        assert args[1] == "Group E: Côte d'Ivoire 1, Ecuador 0 (12')"
+        assert args[1] == "Group E: Côte d'Ivoire 1, Ecuador 0 (12' Erling Haaland)"
 
     async def test_polls_faster_while_live(self):
         svc = _svc(live_poll_interval="20000", poll_interval="60000")
@@ -176,6 +223,31 @@ class TestTick:
         # Only scheduled/finished matches -> normal cadence
         svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(status="STATUS_SCHEDULED")])
         assert await svc._tick() == 60.0
+
+    async def test_goal_then_var_disallowed_lifecycle(self):
+        svc = _svc()
+        svc.wc_data.get_active_tournament = AsyncMock(
+            return_value={"league": "fifa.world", "in_group_stage": True, "stage_label": "Group"}
+        )
+        svc.wc_data.get_team_groups = AsyncMock(return_value=GROUPS)
+
+        # seed at 0-0
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(h=0, a=0, status="STATUS_FIRST_HALF")])
+        await svc._tick()
+        # goal -> announced, scorer remembered
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[
+            _match(h=1, a=0, status="STATUS_FIRST_HALF", goals=[_goal("60'", "Lionel Messi")])
+        ])
+        await svc._tick()
+        # VAR reverses it -> separate "ruled out" notification
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(h=0, a=0, status="STATUS_FIRST_HALF", goals=[])])
+        await svc._tick()
+
+        posted = [c.args[1] for c in svc.bot.command_manager.send_channel_message.await_args_list]
+        assert posted == [
+            "Group E: Côte d'Ivoire 1, Ecuador 0 (60' Lionel Messi)",
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — 60' Lionel Messi ruled out (VAR)",
+        ]
 
     async def test_idle_when_no_tournament(self):
         svc = _svc()

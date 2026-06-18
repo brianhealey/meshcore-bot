@@ -1461,8 +1461,9 @@ class ModernContactsManager {
         const hopCount = contact.hop_count || 0;
         const outPath = contact.out_path || '';
         const outPathLen = contact.out_path_len || -1;
-        const allPaths = contact.all_paths || [];
-        const hasMultiplePaths = allPaths.length > 1;
+        // Full paths are loaded on demand in the modal; the list only needs the count.
+        const pathsCount = contact.paths_count || 0;
+        const hasMultiplePaths = pathsCount > 1;
         
         // Escape the path for use in HTML attributes
         const escapedPath = outPath.replace(/"/g, '&quot;');
@@ -1472,7 +1473,7 @@ class ModernContactsManager {
         if (outPath && outPathLen > 0) {
             // Create a unique ID for this tooltip
             const tooltipId = `hops-tooltip-${contact.user_id.substring(0, 16).replace(/[^a-zA-Z0-9]/g, '_')}`;
-            const pathCountText = hasMultiplePaths ? ` <small>(${allPaths.length} paths)</small>` : '';
+            const pathCountText = hasMultiplePaths ? ` <small>(${pathsCount} paths)</small>` : '';
             const bytesPerHop = contact.out_bytes_per_hop != null && [1, 2, 3].includes(Number(contact.out_bytes_per_hop)) ? Number(contact.out_bytes_per_hop) : '';
             return `<span class="badge bg-primary path-badge" 
                           id="${tooltipId}" 
@@ -1748,8 +1749,23 @@ class ModernContactsManager {
         
         // Store contact and paths for re-rendering
         this.currentModalContact = contact;
-        this.currentModalPaths = contact.all_paths || [];
         const primaryPath = contact.out_path || '';
+
+        // Full path objects are loaded on demand (kept out of the /api/contacts list payload
+        // for performance) — fetch them for this contact now.
+        let detailPaths = [];
+        try {
+            const resp = await fetch('/api/contact-detail?user_id=' + encodeURIComponent(userId));
+            if (resp.ok) {
+                const detail = await resp.json();
+                detailPaths = detail.all_paths || [];
+            } else {
+                console.error('Failed to load contact paths:', resp.status);
+            }
+        } catch (err) {
+            console.error('Error loading contact paths:', err);
+        }
+        this.currentModalPaths = detailPaths;
         
         // Load sort preference from localStorage (default to 'length')
         const sortOrder = localStorage.getItem('contactsPathSortOrder') || 'length';
@@ -1943,14 +1959,29 @@ class ModernContactsManager {
         }
     }
     
-    viewAdvertData(userId) {
-        // Find the contact data
+    async viewAdvertData(userId) {
+        // Find the contact data (for the title); the advert payload is loaded on demand below.
         const contact = this.filteredData.find(c => c.user_id === userId);
         if (!contact) {
             alert('Contact data not found');
             return;
         }
-        
+
+        // Advertisement data is kept out of the /api/contacts list payload for performance —
+        // fetch it for this contact now.
+        let advertData = 'No advertisement data available';
+        try {
+            const resp = await fetch('/api/contact-detail?user_id=' + encodeURIComponent(userId));
+            if (resp.ok) {
+                const detail = await resp.json();
+                advertData = detail.raw_advert_data_parsed || detail.raw_advert_data || advertData;
+            } else {
+                console.error('Failed to load advertisement data:', resp.status);
+            }
+        } catch (err) {
+            console.error('Error loading advertisement data:', err);
+        }
+
         // Create a modal to display the advertisement data
         const modalHtml = `
             <div class="modal fade" id="advertModal" tabindex="-1">
@@ -1961,7 +1992,7 @@ class ModernContactsManager {
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
-                            <pre class="bg-light p-3 rounded" style="background-color: var(--bg-secondary); color: var(--text-color);">${this.escapeHtml(JSON.stringify(contact.raw_advert_data_parsed || contact.raw_advert_data || 'No advertisement data available', null, 2))}</pre>
+                            <pre class="bg-light p-3 rounded" style="background-color: var(--bg-secondary); color: var(--text-color);">${this.escapeHtml(JSON.stringify(advertData, null, 2))}</pre>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>

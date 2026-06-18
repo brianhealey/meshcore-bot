@@ -61,6 +61,7 @@ class WorldCupLiveService(BaseServicePlugin):
 
         self.announce_kickoff = _flag("announce_kickoff", True)
         self.announce_goals = _flag("announce_goals", True)
+        self.announce_disallowed = _flag("announce_disallowed", True)
         self.announce_halftime = _flag("announce_halftime", True)
         self.announce_fulltime = _flag("announce_fulltime", True)
         self.silence_mesh_output = _flag("silence_mesh_output", False)
@@ -189,8 +190,15 @@ class WorldCupLiveService(BaseServicePlugin):
         changed = False
         for m in matches:
             eid = m["id"]
-            cur = {"h": m["home_score"], "a": m["away_score"], "s": m["status"], "g": len(m.get("goals") or [])}
+            # "g" is the count of goals that are both scored AND have a named scoring play —
+            # min(scoring plays, score total). This ignores transient states where a play is
+            # listed before the score updates (or a goal pending VAR), which otherwise cause a
+            # phantom "0-0 (17' Scorer)" announcement.
+            committed = min(len(m.get("goals") or []), m["home_score"] + m["away_score"])
             prev = self._state.get(eid)
+            cur = {"h": m["home_score"], "a": m["away_score"], "s": m["status"], "g": committed,
+                   # carry the last announced goal forward so a later VAR reversal can name it
+                   "lg": prev.get("lg") if prev else None}
             if prev is None:
                 # First sight: seed silently so in-progress matches aren't back-announced.
                 self._state[eid] = cur
@@ -226,37 +234,46 @@ class WorldCupLiveService(BaseServicePlugin):
             return self._score_line(label, m, cur, "full-time")
         if self.announce_halftime and cs == HT_STATUS and ps != HT_STATUS:
             return self._score_line(label, m, cur, "half-time")
-        if (
-            self.announce_goals
-            and (cur["h"] + cur["a"]) > (prev["h"] + prev["a"])  # a goal was added (not a VAR removal)
-            and cs in PLAYING_STATUSES
-        ):
-            return self._score_line(label, m, cur, self._goal_tag(prev, m))
-        return None
+        # A goal is announced only when it is backed by BOTH the score and a named scoring
+        # play: cur["g"] = min(scoring plays, score total). Announcing the slice
+        # goals[prev_g:cur_g] guarantees the scorer is known and the score reflects it,
+        # which avoids phantom announcements when a play is listed before the score updates
+        # or while a goal is under VAR review. A *decrease* in that committed count means a
+        # previously-announced goal was rescinded (VAR) — a separate notification path.
+        if self.announce_goals and cs in PLAYING_STATUSES:
+            goals = m.get("goals") or []
+            # prev_g is absent for state saved before this feature; fall back to the prior
+            # score total as the baseline so old goals are not replayed.
+            prev_g = prev.get("g")
+            if prev_g is None:
+                prev_g = prev["h"] + prev["a"]
 
-    def _goal_tag(self, prev: dict, m: dict) -> Optional[str]:
-        """Build the parenthetical tag for a goal: scorer(s) since last poll, else the clock."""
-        goals = m.get("goals") or []
-        # Only name scorers when we have a known prior count to diff against; otherwise the
-        # whole list would look "new" (e.g. on the first poll after an upgrade).
-        if "g" in prev and len(goals) >= prev["g"]:
-            new_goals = goals[prev["g"]:]
-            if new_goals:
-                return "; ".join(self._fmt_goal(g) for g in new_goals)
-        clock = (m.get("clock") or "").strip()
-        return clock or None
+            if cur["g"] > prev_g:
+                new_goals = goals[prev_g:cur["g"]]
+                cur["lg"] = self._fmt_goal(new_goals[-1])  # remember in case it's later overturned
+                return self._score_line(label, m, cur, "; ".join(self._fmt_goal(g) for g in new_goals))
+
+            # Disallowed goal: the score itself went down. A falling score only happens via a
+            # VAR reversal/correction, and keying off the score (not the play count) avoids a
+            # false positive when a match simply has no scoring-play details.
+            if self.announce_disallowed and (cur["h"] + cur["a"]) < (prev["h"] + prev["a"]):
+                ruled_out = prev.get("lg")
+                detail = f"{ruled_out} ruled out (VAR)" if ruled_out else "goal ruled out (VAR)"
+                cur["lg"] = None
+                return f"{label}: {m['home_name']} {cur['h']}, {m['away_name']} {cur['a']} — {detail}"
+        return None
 
     @staticmethod
     def _fmt_goal(goal: dict) -> str:
         """Format one scoring play, e.g. \"64' Mohammad Mohebbi\" or \"7' Elijah Just, pen\"."""
         clock = (goal.get("clock") or "").strip()
-        name = goal.get("scorer") or "?"
-        text = f"{clock} {name}".strip()
+        name = (goal.get("scorer") or "").strip()
+        base = f"{clock} {name}".strip() if name else (clock or "goal")
         if goal.get("own_goal"):
-            text += ", OG"
+            base += ", OG"
         elif goal.get("penalty"):
-            text += ", pen"
-        return text
+            base += ", pen"
+        return base
 
     def _score_line(self, label: str, m: dict, cur: dict, tag: Optional[str]) -> str:
         line = f"{label}: {m['home_name']} {cur['h']}, {m['away_name']} {cur['a']}"
