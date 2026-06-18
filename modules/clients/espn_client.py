@@ -157,12 +157,13 @@ class ESPNClient:
         """Return current per-match live state for the scoreboard (today's matches).
 
         Each item: {id, home_id, away_id, home_name, away_name, home_score, away_score,
-        status, clock, home_pen, away_pen, goals}. Names are full team display names.
-        Penalty fields are None unless a shootout score is present. ``goals`` is the
+        status, clock, home_pen, away_pen, goals, cards}. Names are full team display
+        names. Penalty fields are None unless a shootout score is present. ``goals`` is the
         chronological list of scoring plays, each {clock, scorer, team_id, own_goal,
-        penalty} (penalty shootout kicks excluded). Used by the live-score service to
-        detect kickoff / goal / half-time / full-time transitions and name scorers.
-        Returns [] on error.
+        penalty, kind} (kind is 'header'/'volley'/''; penalty shootout kicks excluded).
+        ``cards``/``yellows`` are the chronological lists of red/yellow cards, each
+        {clock, player, team_id}. Used by the live-score service to detect kickoff / goal /
+        half-time / full-time / card / stoppage transitions and name players. Returns [] on error.
 
         cache_bust appends a unique query param to bypass ESPN's edge cache, used when a
         fastcast push signals a change so the REST snapshot reflects it immediately.
@@ -190,17 +191,28 @@ class ESPNClient:
                         status_obj = competition.get('status') or event.get('status') or {}
 
                         goals = []
+                        red_cards = []
+                        yellow_cards = []
                         for det in (competition.get('details') or []):
+                            athletes = det.get('athletesInvolved') or []
+                            player = athletes[0].get('displayName', '') if athletes and isinstance(athletes[0], dict) else ''
+                            clock = (det.get('clock') or {}).get('displayValue', '')
+                            team_id = str((det.get('team') or {}).get('id', ''))
+                            if det.get('redCard'):
+                                red_cards.append({'clock': clock, 'player': player, 'team_id': team_id})
+                            elif det.get('yellowCard'):
+                                yellow_cards.append({'clock': clock, 'player': player, 'team_id': team_id})
                             if not det.get('scoringPlay') or det.get('shootout'):
                                 continue
-                            athletes = det.get('athletesInvolved') or []
-                            scorer = athletes[0].get('displayName', '') if athletes and isinstance(athletes[0], dict) else ''
+                            type_text = ((det.get('type') or {}).get('text') or '').lower()
+                            kind = 'header' if 'header' in type_text else ('volley' if 'volley' in type_text else '')
                             goals.append({
-                                'clock': (det.get('clock') or {}).get('displayValue', ''),
-                                'scorer': scorer,
-                                'team_id': str((det.get('team') or {}).get('id', '')),
+                                'clock': clock,
+                                'scorer': player,
+                                'team_id': team_id,
                                 'own_goal': bool(det.get('ownGoal')),
                                 'penalty': bool(det.get('penaltyKick')),
+                                'kind': kind,
                             })
 
                         home_team = home.get('team') or {}
@@ -218,6 +230,8 @@ class ESPNClient:
                             'home_pen': self.extract_shootout_score(home),
                             'away_pen': self.extract_shootout_score(away),
                             'goals': goals,
+                            'cards': red_cards,
+                            'yellows': yellow_cards,
                         })
                     except Exception as e:
                         self.logger.warning(f"ESPN fetch_match_states: skipping malformed event {event.get('id')}: {e}")

@@ -28,6 +28,14 @@ FINAL_STATUSES = {"STATUS_FINAL", "STATUS_FULL_TIME", "STATUS_FINAL_PEN"}
 HT_STATUS = "STATUS_HALFTIME"
 SCHEDULED_STATUS = "STATUS_SCHEDULED"
 PLAYING_STATUSES = LIVE_STATUSES | {HT_STATUS}
+# Match-stoppage statuses and how to word them.
+STOPPAGE_WORDS = {
+    "STATUS_POSTPONED": "postponed",
+    "STATUS_SUSPENDED": "suspended",
+    "STATUS_ABANDONED": "abandoned",
+    "STATUS_CANCELED": "cancelled",
+    "STATUS_CANCELLED": "cancelled",
+}
 METADATA_KEY = "worldcup_live_state"
 
 
@@ -62,6 +70,9 @@ class WorldCupLiveService(BaseServicePlugin):
         self.announce_kickoff = _flag("announce_kickoff", True)
         self.announce_goals = _flag("announce_goals", True)
         self.announce_disallowed = _flag("announce_disallowed", True)
+        self.announce_red_cards = _flag("announce_red_cards", True)
+        self.announce_yellow_cards = _flag("announce_yellow_cards", False)
+        self.announce_stoppage = _flag("announce_stoppage", True)
         self.announce_halftime = _flag("announce_halftime", True)
         self.announce_fulltime = _flag("announce_fulltime", True)
         self.silence_mesh_output = _flag("silence_mesh_output", False)
@@ -197,6 +208,9 @@ class WorldCupLiveService(BaseServicePlugin):
             committed = min(len(m.get("goals") or []), m["home_score"] + m["away_score"])
             prev = self._state.get(eid)
             cur = {"h": m["home_score"], "a": m["away_score"], "s": m["status"], "g": committed,
+                   # red/yellow card counts so far in the match
+                   "rc": len(m.get("cards") or []),
+                   "yc": len(m.get("yellows") or []),
                    # carry the last announced goal forward so a later VAR reversal can name it
                    "lg": prev.get("lg") if prev else None}
             if prev is None:
@@ -207,6 +221,16 @@ class WorldCupLiveService(BaseServicePlugin):
             msg = self._detect(prev, cur, m, in_group, groups, stage_label)
             if msg:
                 messages.append(msg)
+            if self.announce_red_cards:
+                rc = self._detect_card(prev, cur, m, in_group, groups, stage_label,
+                                       count_key="rc", list_key="cards", word="red card")
+                if rc:
+                    messages.append(rc)
+            if self.announce_yellow_cards:
+                yc = self._detect_card(prev, cur, m, in_group, groups, stage_label,
+                                       count_key="yc", list_key="yellows", word="yellow card")
+                if yc:
+                    messages.append(yc)
             if cur != prev:
                 self._state[eid] = cur
                 changed = True
@@ -230,6 +254,8 @@ class WorldCupLiveService(BaseServicePlugin):
 
         if self.announce_kickoff and ps == SCHEDULED_STATUS and cs in PLAYING_STATUSES:
             return f"{label}: {m['home_name']} vs {m['away_name']} (kick-off)"
+        if self.announce_stoppage and cs in STOPPAGE_WORDS and ps not in STOPPAGE_WORDS:
+            return self._score_line(label, m, cur, STOPPAGE_WORDS[cs])
         if self.announce_fulltime and cs in FINAL_STATUSES and ps not in FINAL_STATUSES:
             return self._score_line(label, m, cur, "full-time")
         if self.announce_halftime and cs == HT_STATUS and ps != HT_STATUS:
@@ -265,7 +291,8 @@ class WorldCupLiveService(BaseServicePlugin):
 
     @staticmethod
     def _fmt_goal(goal: dict) -> str:
-        """Format one scoring play, e.g. \"64' Mohammad Mohebbi\" or \"7' Elijah Just, pen\"."""
+        """Format one scoring play, e.g. \"64' Mohammad Mohebbi\", \"7' Elijah Just, pen\",
+        or \"30' Cody Gakpo, header\"."""
         clock = (goal.get("clock") or "").strip()
         name = (goal.get("scorer") or "").strip()
         base = f"{clock} {name}".strip() if name else (clock or "goal")
@@ -273,6 +300,8 @@ class WorldCupLiveService(BaseServicePlugin):
             base += ", OG"
         elif goal.get("penalty"):
             base += ", pen"
+        elif goal.get("kind"):
+            base += f", {goal['kind']}"
         return base
 
     def _score_line(self, label: str, m: dict, cur: dict, tag: Optional[str]) -> str:
@@ -282,6 +311,33 @@ class WorldCupLiveService(BaseServicePlugin):
         if tag:
             line += f" ({tag})"
         return line
+
+    def _detect_card(self, prev: dict, cur: dict, m: dict, in_group: bool, groups: dict, stage_label: str,
+                     *, count_key: str, list_key: str, word: str) -> Optional[str]:
+        """Announce newly-shown card(s) of one kind (red or yellow). Runs alongside _detect
+        (a card can occur in the same poll as a goal), keyed off the card count growing.
+        The caller gates on the relevant announce_* flag."""
+        if cur["s"] not in PLAYING_STATUSES:
+            return None
+        prev_c = prev.get(count_key)
+        if prev_c is None:
+            # State saved before this feature: re-baseline so existing cards aren't replayed.
+            prev_c = cur[count_key]
+        if cur[count_key] <= prev_c:
+            return None
+        new_cards = (m.get(list_key) or [])[prev_c:cur[count_key]]
+        label = self._label(m, in_group, groups, stage_label)
+        details = "; ".join(self._fmt_card(c, m, word) for c in new_cards)
+        return f"{label}: {m['home_name']} {cur['h']}, {m['away_name']} {cur['a']} — {details}"
+
+    @staticmethod
+    def _fmt_card(card: dict, m: dict, word: str) -> str:
+        """Format a card, e.g. \"red card: Tarik Muharemovic (Switzerland, 80')\"."""
+        player = (card.get("player") or "").strip() or "a player"
+        clock = (card.get("clock") or "").strip()
+        team = m["home_name"] if card.get("team_id") == m.get("home_id") else m["away_name"]
+        inside = ", ".join(p for p in (team, clock) if p)
+        return f"{word}: {player} ({inside})" if inside else f"{word}: {player}"
 
     @staticmethod
     def _label(m: dict, in_group: bool, groups: dict, stage_label: str) -> str:

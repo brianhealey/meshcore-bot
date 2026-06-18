@@ -35,16 +35,21 @@ def _svc(**overrides):
 
 
 def _match(eid="1", h=0, a=0, status="STATUS_SCHEDULED", clock="", hp=None, ap=None,
-           hid="100", aid="200", hn="Côte d'Ivoire", an="Ecuador", goals=None):
+           hid="100", aid="200", hn="Côte d'Ivoire", an="Ecuador", goals=None, cards=None, yellows=None):
     return {
         "id": eid, "home_id": hid, "away_id": aid, "home_name": hn, "away_name": an,
         "home_score": h, "away_score": a, "status": status, "clock": clock,
-        "home_pen": hp, "away_pen": ap, "goals": goals or [],
+        "home_pen": hp, "away_pen": ap, "goals": goals or [], "cards": cards or [], "yellows": yellows or [],
     }
 
 
-def _goal(clock, scorer, own_goal=False, penalty=False, team_id="100"):
-    return {"clock": clock, "scorer": scorer, "team_id": team_id, "own_goal": own_goal, "penalty": penalty}
+def _goal(clock, scorer, own_goal=False, penalty=False, team_id="100", kind=""):
+    return {"clock": clock, "scorer": scorer, "team_id": team_id, "own_goal": own_goal,
+            "penalty": penalty, "kind": kind}
+
+
+def _card(clock, player, team_id="200"):
+    return {"clock": clock, "player": player, "team_id": team_id}
 
 
 GROUPS = {"100": "Group E", "200": "Group E"}
@@ -85,6 +90,12 @@ class TestDetect:
         m = _match(h=1, a=0, status="STATUS_FIRST_HALF", clock="7'",
                    goals=[_goal("7'", "Elijah Just")])
         assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (7' Elijah Just)"
+
+    def test_goal_header_flavor(self):
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF", "g": 0}
+        m = _match(h=1, a=0, status="STATUS_FIRST_HALF", goals=[_goal("30'", "Cody Gakpo", kind="header")])
+        assert self._detect(svc, prev, m) == "Group E: Côte d'Ivoire 1, Ecuador 0 (30' Cody Gakpo, header)"
 
     def test_goal_penalty_annotation(self):
         svc = _svc()
@@ -186,6 +197,107 @@ class TestDetect:
         assert msg.startswith("Round of 32: ")
 
 
+class TestRedCards:
+    def _red(self, svc, prev, m, in_group=True):
+        cur = {
+            "h": m["home_score"], "a": m["away_score"], "s": m["status"],
+            "g": min(len(m.get("goals") or []), m["home_score"] + m["away_score"]),
+            "rc": len(m.get("cards") or []), "yc": len(m.get("yellows") or []), "lg": prev.get("lg"),
+        }
+        return svc._detect_card(prev, cur, m, in_group, GROUPS, "Round of 32",
+                                count_key="rc", list_key="cards", word="red card")
+
+    def test_red_card_names_player_and_team(self):
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_SECOND_HALF", "rc": 0}
+        m = _match(h=0, a=0, status="STATUS_SECOND_HALF", cards=[_card("80'", "Tarik Muharemovic", team_id="200")])
+        assert self._red(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — red card: Tarik Muharemovic (Ecuador, 80')"
+
+    def test_red_card_home_team_resolved(self):
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_SECOND_HALF", "rc": 0}
+        m = _match(h=1, a=0, status="STATUS_SECOND_HALF", cards=[_card("55'", "A Defender", team_id="100")])
+        assert self._red(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 1, Ecuador 0 — red card: A Defender (Côte d'Ivoire, 55')"
+
+    def test_red_card_only_new_one_announced(self):
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_SECOND_HALF", "rc": 1}
+        m = _match(h=0, a=0, status="STATUS_SECOND_HALF",
+                   cards=[_card("40'", "First"), _card("80'", "Second", team_id="200")])
+        assert self._red(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — red card: Second (Ecuador, 80')"
+
+    def test_red_card_old_state_rebaselines(self):
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_SECOND_HALF"}  # no "rc"
+        m = _match(h=0, a=0, status="STATUS_SECOND_HALF", cards=[_card("80'", "Tarik Muharemovic")])
+        assert self._red(svc, prev, m) is None
+
+    def test_red_card_not_announced_when_not_in_play(self):
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_SECOND_HALF", "rc": 0}
+        m = _match(h=1, a=0, status="STATUS_FULL_TIME", cards=[_card("80'", "Late Red")])
+        assert self._red(svc, prev, m) is None
+
+
+class TestYellowCardsAndStoppage:
+    def _yellow(self, svc, prev, m, in_group=True):
+        cur = {
+            "h": m["home_score"], "a": m["away_score"], "s": m["status"],
+            "g": min(len(m.get("goals") or []), m["home_score"] + m["away_score"]),
+            "rc": len(m.get("cards") or []), "yc": len(m.get("yellows") or []), "lg": prev.get("lg"),
+        }
+        return svc._detect_card(prev, cur, m, in_group, GROUPS, "Round of 32",
+                                count_key="yc", list_key="yellows", word="yellow card")
+
+    def test_yellow_card_formatted(self):
+        svc = _svc(announce_yellow_cards="true")
+        prev = {"h": 0, "a": 0, "s": "STATUS_FIRST_HALF", "yc": 0}
+        m = _match(h=0, a=0, status="STATUS_FIRST_HALF", yellows=[_card("33'", "Teboho Mokoena", team_id="100")])
+        assert self._yellow(svc, prev, m) == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 — yellow card: Teboho Mokoena (Côte d'Ivoire, 33')"
+
+    async def test_yellow_off_by_default_through_tick(self):
+        svc = _svc()  # announce_yellow_cards defaults False
+        assert svc.announce_yellow_cards is False
+        svc.wc_data.get_active_tournament = AsyncMock(
+            return_value={"league": "fifa.world", "in_group_stage": True, "stage_label": "Group"}
+        )
+        svc.wc_data.get_team_groups = AsyncMock(return_value=GROUPS)
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(h=0, a=0, status="STATUS_FIRST_HALF")])
+        await svc._tick()  # seed
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[
+            _match(h=0, a=0, status="STATUS_FIRST_HALF", yellows=[_card("33'", "Booked")])
+        ])
+        await svc._tick()
+        svc.bot.command_manager.send_channel_message.assert_not_awaited()
+
+    def test_stoppage_abandoned(self):
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_SECOND_HALF", "g": 1}
+        m = _match(h=1, a=0, status="STATUS_ABANDONED")
+        cur = {"h": 1, "a": 0, "s": "STATUS_ABANDONED", "g": 1, "rc": 0, "yc": 0, "lg": None}
+        assert svc._detect(prev, cur, m, True, GROUPS, "Round of 32") == \
+            "Group E: Côte d'Ivoire 1, Ecuador 0 (abandoned)"
+
+    def test_stoppage_postponed_from_scheduled(self):
+        svc = _svc()
+        prev = {"h": 0, "a": 0, "s": "STATUS_SCHEDULED", "g": 0}
+        m = _match(h=0, a=0, status="STATUS_POSTPONED")
+        cur = {"h": 0, "a": 0, "s": "STATUS_POSTPONED", "g": 0, "rc": 0, "yc": 0, "lg": None}
+        assert svc._detect(prev, cur, m, True, GROUPS, "Round of 32") == \
+            "Group E: Côte d'Ivoire 0, Ecuador 0 (postponed)"
+
+    def test_stoppage_not_repeated(self):
+        svc = _svc()
+        prev = {"h": 1, "a": 0, "s": "STATUS_SUSPENDED", "g": 1}
+        m = _match(h=1, a=0, status="STATUS_SUSPENDED")
+        cur = {"h": 1, "a": 0, "s": "STATUS_SUSPENDED", "g": 1, "rc": 0, "yc": 0, "lg": None}
+        assert svc._detect(prev, cur, m, True, GROUPS, "Round of 32") is None
+
+
 class TestTick:
     async def test_seeds_silently_then_announces(self):
         svc = _svc()
@@ -247,6 +359,25 @@ class TestTick:
         assert posted == [
             "Group E: Côte d'Ivoire 1, Ecuador 0 (60' Lionel Messi)",
             "Group E: Côte d'Ivoire 0, Ecuador 0 — 60' Lionel Messi ruled out (VAR)",
+        ]
+
+    async def test_goal_and_red_card_same_poll_both_announced(self):
+        svc = _svc()
+        svc.wc_data.get_active_tournament = AsyncMock(
+            return_value={"league": "fifa.world", "in_group_stage": True, "stage_label": "Group"}
+        )
+        svc.wc_data.get_team_groups = AsyncMock(return_value=GROUPS)
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[_match(h=0, a=0, status="STATUS_SECOND_HALF")])
+        await svc._tick()  # seed
+        svc.espn_client.fetch_match_states = AsyncMock(return_value=[
+            _match(h=1, a=0, status="STATUS_SECOND_HALF",
+                   goals=[_goal("70'", "Scorer")], cards=[_card("70'", "Sent Off", team_id="200")])
+        ])
+        await svc._tick()
+        posted = [c.args[1] for c in svc.bot.command_manager.send_channel_message.await_args_list]
+        assert posted == [
+            "Group E: Côte d'Ivoire 1, Ecuador 0 (70' Scorer)",
+            "Group E: Côte d'Ivoire 1, Ecuador 0 — red card: Sent Off (Ecuador, 70')",
         ]
 
     async def test_idle_when_no_tournament(self):

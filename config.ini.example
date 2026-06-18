@@ -1903,6 +1903,13 @@ announce_goals = true
 # rescinded), e.g. "Group J: Argentina 0, Algeria 0 — 60' Lionel Messi ruled out (VAR)".
 # Detected from the score being reverted; requires announce_goals = true.
 announce_disallowed = true
+# Announce red cards, e.g.
+#   "Group H: Bosnia-Herzegovina 0, Switzerland 1 — red card: Tarik Muharemovic (Switzerland, 80')"
+announce_red_cards = true
+# Announce yellow cards too. OFF by default — yellows are frequent and can flood a mesh channel.
+announce_yellow_cards = false
+# Announce match stoppages (postponed / suspended / abandoned / cancelled). Rare but important.
+announce_stoppage = true
 announce_halftime = true
 announce_fulltime = true
 

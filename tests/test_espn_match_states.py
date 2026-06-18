@@ -79,7 +79,7 @@ class TestFetchMatchStatesResilience:
         ids = [s["id"] for s in states]
         assert ids == ["ok"]  # broken skipped, good survives
         assert states[0]["goals"][0] == {
-            "clock": "10'", "scorer": "Haaland", "team_id": "1", "own_goal": False, "penalty": False,
+            "clock": "10'", "scorer": "Haaland", "team_id": "1", "own_goal": False, "penalty": False, "kind": "",
         }
 
     async def test_null_status_defaults_to_unknown(self):
@@ -93,6 +93,21 @@ class TestFetchMatchStatesResilience:
         states = await _client(payload).fetch_match_states("soccer", "fifa.world")
         assert states[0]["goals"][0]["scorer"] == ""
 
+    async def test_red_card_parsed_into_cards(self):
+        red = {"redCard": True, "scoringPlay": False, "clock": {"displayValue": "80'"},
+               "team": {"id": "2"}, "athletesInvolved": [{"displayName": "Tarik Muharemovic"}]}
+        goal = _scoring({"displayValue": "10'"}, "Scorer")
+        payload = {"events": [_event("1", 1, 0, details=[goal, red])]}
+        states = await _client(payload).fetch_match_states("soccer", "fifa.world")
+        assert states[0]["cards"] == [{"clock": "80'", "player": "Tarik Muharemovic", "team_id": "2"}]
+        assert len(states[0]["goals"]) == 1  # the red card is not counted as a goal
+
+    async def test_null_clock_red_card_does_not_crash(self):
+        red = {"redCard": True, "scoringPlay": False, "clock": None, "team": {"id": "1"},
+               "athletesInvolved": [{"displayName": "X"}]}
+        states = await _client({"events": [_event("1", 0, 0, details=[red])]}).fetch_match_states("soccer", "fifa.world")
+        assert states[0]["cards"][0]["clock"] == ""
+
     async def test_normal_event_parses(self):
         payload = {"events": [_event("1", 2, 1, details=[
             _scoring({"displayValue": "12'"}, "A"), _scoring({"displayValue": "40'"}, "B", team="2"),
@@ -101,3 +116,16 @@ class TestFetchMatchStatesResilience:
         s = states[0]
         assert (s["home_score"], s["away_score"]) == (2, 1)
         assert [g["scorer"] for g in s["goals"]] == ["A", "B"]
+
+    async def test_yellow_card_parsed_into_yellows(self):
+        yel = {"yellowCard": True, "scoringPlay": False, "clock": {"displayValue": "33'"},
+               "team": {"id": "1"}, "athletesInvolved": [{"displayName": "Teboho Mokoena"}]}
+        states = await _client({"events": [_event("1", 0, 0, details=[yel])]}).fetch_match_states("soccer", "fifa.world")
+        assert states[0]["yellows"] == [{"clock": "33'", "player": "Teboho Mokoena", "team_id": "1"}]
+        assert states[0]["cards"] == []  # not a red card
+
+    async def test_goal_kind_header(self):
+        det = {"scoringPlay": True, "clock": {"displayValue": "30'"}, "team": {"id": "1"},
+               "type": {"text": "Goal - Header"}, "athletesInvolved": [{"displayName": "Gakpo"}]}
+        states = await _client({"events": [_event("1", 1, 0, details=[det])]}).fetch_match_states("soccer", "fifa.world")
+        assert states[0]["goals"][0]["kind"] == "header"
