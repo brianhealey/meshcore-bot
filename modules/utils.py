@@ -10,7 +10,7 @@ import re
 import socket
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -55,6 +55,57 @@ def get_config_timezone(config: Any, logger: Optional[Any] = None) -> tuple[Any,
     # System timezone for datetime; use "UTC" for API when we don't have an IANA name
     tz = datetime.now().astimezone().tzinfo
     return (tz, "UTC")
+
+
+def espn_dates_for_local_day(
+    local_tz: Any,
+    now: Optional[datetime] = None,
+) -> tuple[str, str, float, float]:
+    """Return ESPN scoreboard date range and local-day bounds for filtering events.
+
+    ESPN buckets scoreboard events by UTC calendar date. A single local calendar day
+    can span two UTC dates (e.g. 9pm PT is the next UTC day). This returns the
+    min/max YYYYMMDD strings to query, plus local midnight timestamps for filtering.
+
+    Returns:
+        (start_yyyymmdd, end_yyyymmdd, local_start_ts, local_end_ts)
+    """
+    if now is None:
+        now = datetime.now(local_tz)
+    elif now.tzinfo is None:
+        if hasattr(local_tz, 'localize'):
+            now = local_tz.localize(now)
+        else:
+            now = now.replace(tzinfo=local_tz)
+    else:
+        now = now.astimezone(local_tz)
+
+    if hasattr(local_tz, 'localize'):
+        local_start = local_tz.localize(datetime(now.year, now.month, now.day))
+    else:
+        local_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local_start + timedelta(days=1)
+
+    utc_dates = {
+        local_start.astimezone(timezone.utc).strftime("%Y%m%d"),
+        (local_end - timedelta(seconds=1)).astimezone(timezone.utc).strftime("%Y%m%d"),
+    }
+    return min(utc_dates), max(utc_dates), local_start.timestamp(), local_end.timestamp()
+
+
+def filter_events_local_day(
+    events: list[dict],
+    local_start_ts: float,
+    local_end_ts: float,
+    ts_key: str = "event_timestamp",
+) -> list[dict]:
+    """Keep events whose kickoff falls in [local_start, local_end); keep missing timestamps."""
+    filtered: list[dict] = []
+    for event in events:
+        ts = event.get(ts_key)
+        if ts is None or (local_start_ts <= ts < local_end_ts):
+            filtered.append(event)
+    return filtered
 
 
 def format_temperature_high_low(

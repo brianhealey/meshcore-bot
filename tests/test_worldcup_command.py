@@ -4,9 +4,12 @@ import configparser
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+import pytz
+
 from modules.clients.espn_client import ESPNClient
 from modules.clients.worldcup_data import WorldCupData
 from modules.commands.worldcup_command import WorldCupCommand
+from modules.utils import espn_dates_for_local_day
 from tests.conftest import mock_message
 
 
@@ -16,6 +19,7 @@ def _make_bot():
     config = configparser.ConfigParser()
     config.add_section("Bot")
     config.set("Bot", "bot_name", "TestBot")
+    config.set("Bot", "timezone", "America/Los_Angeles")
     config.add_section("Channels")
     config.set("Channels", "monitor_channels", "general")
     config.set("Channels", "respond_to_dms", "true")
@@ -171,13 +175,21 @@ class TestDispatch:
     async def test_today_no_args(self):
         cmd = _make_command()
         _patch_active(cmd)
+        tz = pytz.timezone("America/Los_Angeles")
+        _, _, local_start_ts, _ = espn_dates_for_local_day(tz)
+        ft_ts = local_start_ts + 14 * 3600
+        live_ts = local_start_ts + 21 * 3600
         cmd.espn_client.fetch_scoreboard_with_calendar = AsyncMock(
             return_value={"events": [
-                {"formatted": "@GER 7-1 CUW (FT)", "timestamp": 9999999998, "status": "STATUS_FULL_TIME", "event_timestamp": 100},
-                {"formatted": "@NED 2-2 JPN (45')", "timestamp": -1, "status": "STATUS_IN_PROGRESS", "event_timestamp": 200},
+                {"formatted": "@GER 7-1 CUW (FT)", "timestamp": 9999999998, "status": "STATUS_FULL_TIME", "event_timestamp": ft_ts},
+                {"formatted": "@NED 2-2 JPN (45')", "timestamp": -1, "status": "STATUS_IN_PROGRESS", "event_timestamp": live_ts},
             ]}
         )
         await cmd.execute(mock_message("wc"))
+        kwargs = cmd.espn_client.fetch_scoreboard_with_calendar.await_args.kwargs
+        assert kwargs["start_date"]
+        assert kwargs["end_date"]
+        assert kwargs["start_date"] <= kwargs["end_date"]
         chunks = cmd.bot.command_manager.send_response_chunked.await_args.args[1]
         # Live game should be ordered before the completed result
         assert chunks[0].splitlines()[0].endswith("(45')")

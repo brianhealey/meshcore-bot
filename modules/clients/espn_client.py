@@ -33,6 +33,37 @@ class ESPNClient:
             self.session = aiohttp.ClientSession(timeout=self.timeout)
         return self.session
 
+    @staticmethod
+    def _scoreboard_url(
+        sport: str,
+        league: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        cache_bust: bool = False,
+    ) -> str:
+        url = f"{ESPNClient.BASE_URL}/{sport}/{league}/scoreboard"
+        params: list[str] = []
+        if start_date and end_date:
+            params.append(f"dates={start_date}-{end_date}")
+        if cache_bust:
+            params.append(f"_={int(time.time() * 1000)}")
+        if params:
+            url += "?" + "&".join(params)
+        return url
+
+    @staticmethod
+    def _event_timestamp(event: dict) -> Optional[float]:
+        date_str = event.get('date', '')
+        if not date_str:
+            return None
+        try:
+            dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except (TypeError, ValueError):
+            return None
+
     async def fetch_scoreboard(self, sport: str, league: str) -> list[dict]:
         """Fetch and parse scoreboard data for a league"""
         url = f"{self.BASE_URL}/{sport}/{league}/scoreboard"
@@ -53,7 +84,13 @@ class ESPNClient:
             self.logger.error(f"ESPN fetch_scoreboard error for {sport}/{league}: {e}")
             return []
 
-    async def fetch_scoreboard_with_calendar(self, sport: str, league: str) -> Optional[dict]:
+    async def fetch_scoreboard_with_calendar(
+        self,
+        sport: str,
+        league: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[dict]:
         """Fetch scoreboard plus tournament calendar/league metadata.
 
         Returns a dict with:
@@ -64,8 +101,10 @@ class ESPNClient:
 
         Used by the World Cup command to determine whether a tournament is in season
         and to resolve nation names when standings are unavailable. Returns None on error.
+
+        Optional start_date/end_date are YYYYMMDD strings for the dated scoreboard endpoint.
         """
-        url = f"{self.BASE_URL}/{sport}/{league}/scoreboard"
+        url = self._scoreboard_url(sport, league, start_date, end_date)
         try:
             session = await self._get_session()
             async with session.get(url) as response:
@@ -153,11 +192,18 @@ class ESPNClient:
         except (TypeError, ValueError):
             return 0
 
-    async def fetch_match_states(self, sport: str, league: str, cache_bust: bool = False) -> list[dict]:
+    async def fetch_match_states(
+        self,
+        sport: str,
+        league: str,
+        cache_bust: bool = False,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> list[dict]:
         """Return current per-match live state for the scoreboard (today's matches).
 
         Each item: {id, home_id, away_id, home_name, away_name, home_score, away_score,
-        status, clock, home_pen, away_pen, goals, cards}. Names are full team display
+        status, clock, home_pen, away_pen, goals, cards, event_timestamp}. Names are full team display
         names. Penalty fields are None unless a shootout score is present. ``goals`` is the
         chronological list of scoring plays, each {clock, scorer, team_id, own_goal,
         penalty, kind} (kind is 'header'/'volley'/''; penalty shootout kicks excluded).
@@ -167,10 +213,10 @@ class ESPNClient:
 
         cache_bust appends a unique query param to bypass ESPN's edge cache, used when a
         fastcast push signals a change so the REST snapshot reflects it immediately.
+
+        Optional start_date/end_date are YYYYMMDD strings for the dated scoreboard endpoint.
         """
-        url = f"{self.BASE_URL}/{sport}/{league}/scoreboard"
-        if cache_bust:
-            url += f"?_={int(time.time() * 1000)}"
+        url = self._scoreboard_url(sport, league, start_date, end_date, cache_bust=cache_bust)
         try:
             session = await self._get_session()
             async with session.get(url) as response:
@@ -232,6 +278,7 @@ class ESPNClient:
                             'goals': goals,
                             'cards': red_cards,
                             'yellows': yellow_cards,
+                            'event_timestamp': self._event_timestamp(event),
                         })
                     except Exception as e:
                         self.logger.warning(f"ESPN fetch_match_states: skipping malformed event {event.get('id')}: {e}")

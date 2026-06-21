@@ -21,6 +21,7 @@ from ..clients.espn_client import ESPNClient
 from ..clients.sports_mappings import SPORT_EMOJIS
 from ..clients.worldcup_data import WorldCupData
 from ..models import MeshMessage
+from ..utils import espn_dates_for_local_day, filter_events_local_day, get_config_timezone
 from .base_command import BaseCommand
 
 if TYPE_CHECKING:
@@ -192,9 +193,13 @@ class WorldCupCommand(BaseCommand):
 
     async def _handle_today(self, message: MeshMessage, league: str) -> bool:
         """Send today's scores (live first), chunked across up to 3 messages."""
-        # The scoreboard endpoint already carries live scores, so no refresh is needed.
-        data = await self.espn_client.fetch_scoreboard_with_calendar("soccer", league)
+        local_tz, _ = get_config_timezone(self.bot.config, self.logger)
+        start_date, end_date, local_start_ts, local_end_ts = espn_dates_for_local_day(local_tz)
+        data = await self.espn_client.fetch_scoreboard_with_calendar(
+            "soccer", league, start_date=start_date, end_date=end_date,
+        )
         games = data.get("events", []) if data else []
+        games = filter_events_local_day(games, local_start_ts, local_end_ts)
         if not games:
             return await self.send_response(message, self.translate("commands.worldcup.no_games_today"))
 

@@ -21,6 +21,7 @@ from typing import Any, Optional
 from ..clients.espn_client import ESPNClient
 from ..clients.worldcup_data import WorldCupData
 from ..clients.worldcup_fastcast import WorldCupFastcastClient
+from ..utils import espn_dates_for_local_day, filter_events_local_day, get_config_timezone
 from .base_service import BaseServicePlugin
 
 LIVE_STATUSES = {"STATUS_IN_PROGRESS", "STATUS_FIRST_HALF", "STATUS_SECOND_HALF", "STATUS_END_PERIOD"}
@@ -191,7 +192,15 @@ class WorldCupLiveService(BaseServicePlugin):
         in_group = active.get("in_group_stage", False)
         stage_label = active.get("stage_label", "")
 
-        matches = await self.espn_client.fetch_match_states("soccer", league, cache_bust=self.use_fastcast)
+        local_tz, _ = get_config_timezone(self.bot.config, self.logger)
+        start_date, end_date, local_start_ts, local_end_ts = espn_dates_for_local_day(local_tz)
+        matches = await self.espn_client.fetch_match_states(
+            "soccer", league,
+            cache_bust=self.use_fastcast,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        matches = filter_events_local_day(matches, local_start_ts, local_end_ts)
         if not matches:
             return self.poll_interval_seconds
 

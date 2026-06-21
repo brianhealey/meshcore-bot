@@ -30,8 +30,10 @@ class _FakeSession:
     def __init__(self, payload):
         self._payload = payload
         self.closed = False
+        self.last_url = None
 
     def get(self, url):
+        self.last_url = url
         return _FakeResp(self._payload)
 
 
@@ -129,3 +131,21 @@ class TestFetchMatchStatesResilience:
                "type": {"text": "Goal - Header"}, "athletesInvolved": [{"displayName": "Gakpo"}]}
         states = await _client({"events": [_event("1", 1, 0, details=[det])]}).fetch_match_states("soccer", "fifa.world")
         assert states[0]["goals"][0]["kind"] == "header"
+
+    async def test_fetch_match_states_uses_dates_param(self):
+        session = _FakeSession({"events": []})
+        client = ESPNClient(logger=Mock(), session=session)
+        await client.fetch_match_states(
+            "soccer", "fifa.world", start_date="20260620", end_date="20260621",
+        )
+        assert session.last_url is not None
+        assert "dates=20260620-20260621" in session.last_url
+
+    async def test_fetch_match_states_dates_and_cache_bust(self):
+        session = _FakeSession({"events": []})
+        client = ESPNClient(logger=Mock(), session=session)
+        await client.fetch_match_states(
+            "soccer", "fifa.world", cache_bust=True, start_date="20260620", end_date="20260621",
+        )
+        assert "dates=20260620-20260621" in session.last_url
+        assert "_=" in session.last_url
