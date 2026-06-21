@@ -571,12 +571,7 @@ class RepeaterManager:
 
     def _update_currently_tracked_status_on_conn(self, conn, public_key: str):
         """Update the is_currently_tracked flag on an existing connection (no commit)."""
-        is_tracked = False
-        if hasattr(self.bot.meshcore, 'contacts'):
-            for contact_key, contact_data in list(self.bot.meshcore.contacts.items()):
-                if contact_data.get('public_key', contact_key) == public_key:
-                    is_tracked = True
-                    break
+        is_tracked = self.is_contact_on_device(public_key)
         self.db_manager.execute_update_on_connection(
             conn,
             'UPDATE complete_contact_tracking SET is_currently_tracked = ? WHERE public_key = ?',
@@ -586,13 +581,7 @@ class RepeaterManager:
     async def _update_currently_tracked_status(self, public_key: str):
         """Update the is_currently_tracked flag based on device contact list"""
         try:
-            # Check if this repeater is currently in the device's contact list
-            is_tracked = False
-            if hasattr(self.bot.meshcore, 'contacts'):
-                for contact_key, contact_data in list(self.bot.meshcore.contacts.items()):
-                    if contact_data.get('public_key', contact_key) == public_key:
-                        is_tracked = True
-                        break
+            is_tracked = self.is_contact_on_device(public_key)
 
             # Update the flag
             self.db_manager.execute_update(
@@ -602,6 +591,35 @@ class RepeaterManager:
 
         except Exception as e:
             self.logger.error(f"Error updating currently tracked status: {e}")
+
+    def get_tracked_contact_row(self, public_key: str) -> Optional[dict[str, Any]]:
+        """Return a tracked contact row by public key, or None when absent."""
+        try:
+            rows = self.db_manager.execute_query(
+                '''
+                SELECT public_key, name, role, device_type, first_heard, last_heard,
+                       advert_count, is_currently_tracked
+                FROM complete_contact_tracking
+                WHERE public_key = ?
+                LIMIT 1
+                ''',
+                (public_key,),
+            )
+            return rows[0] if rows else None
+        except Exception as e:
+            self.logger.debug("Error looking up tracked contact %s: %s", public_key[:16], e)
+            return None
+
+    def is_contact_on_device(self, public_key: str) -> bool:
+        """Return True when the radio's live contact table already contains public_key."""
+        try:
+            if hasattr(self.bot.meshcore, 'contacts'):
+                for contact_key, contact_data in list(self.bot.meshcore.contacts.items()):
+                    if contact_data.get('public_key', contact_key) == public_key:
+                        return True
+        except Exception as e:
+            self.logger.debug("Error checking live device contacts for %s: %s", public_key[:16], e)
+        return False
 
     async def get_complete_contact_database(self, role_filter: Optional[str] = None, include_historical: bool = True) -> list[dict]:
         """Get complete contact database for path estimation and analysis"""

@@ -3605,10 +3605,16 @@ class MessageHandler:
             # Check if this is a repeater or companion
             if hasattr(self.bot, "repeater_manager"):
                 is_repeater = self.bot.repeater_manager._is_repeater_device(contact_data)
+                existing_tracking = self.bot.repeater_manager.get_tracked_contact_row(public_key)
+                already_on_device = self.bot.repeater_manager.is_contact_on_device(public_key)
+                known_contact = already_on_device or existing_tracking is not None
 
                 if is_repeater:
                     # REPEATER: Track directly in SQLite database (no device contact list)
-                    self.logger.info(f"📡 New repeater discovered: {contact_name} - tracking in database only")
+                    if known_contact:
+                        self.logger.info(f"📡 Known repeater advert: {contact_name} - tracking in database only")
+                    else:
+                        self.logger.info(f"📡 New repeater discovered: {contact_name} - tracking in database only")
 
                     # Track repeater in complete database with signal info
                     await self.bot.repeater_manager.track_contact_advertisement(
@@ -3640,11 +3646,18 @@ class MessageHandler:
                 else:
                     # COMPANION: track in DB; device add behaviour depends on auto_manage_contacts
                     auto_manage_setting = self.bot.config.get("Bot", "auto_manage_contacts", fallback="false").lower()
-                    self.logger.info(
-                        "👤 New companion discovered: %s — auto_manage_contacts=%s",
-                        contact_name,
-                        auto_manage_setting,
-                    )
+                    if known_contact:
+                        self.logger.info(
+                            "👤 Known companion advert: %s — auto_manage_contacts=%s",
+                            contact_name,
+                            auto_manage_setting,
+                        )
+                    else:
+                        self.logger.info(
+                            "👤 New companion discovered: %s — auto_manage_contacts=%s",
+                            contact_name,
+                            auto_manage_setting,
+                        )
 
                     track_result = await self.bot.repeater_manager.track_contact_advertisement(
                         contact_data, signal_info, packet_hash=packet_hash
@@ -3669,7 +3682,7 @@ class MessageHandler:
                             await self.bot.repeater_manager.manage_contact_list(auto_cleanup=True)
                         else:
                             self.logger.info(
-                                "New companion %s — contact list has adequate space",
+                                "Companion %s — contact list has adequate space",
                                 contact_name,
                             )
                     elif auto_manage_setting == "bot":
@@ -3718,10 +3731,11 @@ class MessageHandler:
 
                     await self.bot.repeater_manager.check_and_auto_purge()
 
-                    self.bot.repeater_manager.log_purging_action(
-                        "new_contact_discovered",
-                        f"New contact discovered: {contact_name} (key: {public_key[:16]}...)",
-                    )
+                    if not known_contact:
+                        self.bot.repeater_manager.log_purging_action(
+                            "new_contact_discovered",
+                            f"New contact discovered: {contact_name} (key: {public_key[:16]}...)",
+                        )
                     return
 
             # Fallback: Track in database for unknown contact types (no repeater_manager)
