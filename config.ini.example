@@ -209,6 +209,13 @@ service_restart_backoff_seconds = 300
 # Max seconds to wait for a channel message send before timing out (default: 30)
 send_timeout_seconds = 30
 
+# Set a custom prefix length for the public keys to identify repeaters
+# 1 = 2 hex chars (e.g. 7E), 2 = 4 hex chars (e.g. 7E42). Also used as the mesh
+# graph key length; if the mesh often uses 2-byte paths, set to 2 to avoid
+# conflating distinct links (see Path Command / path-command-config.md).
+# Does not control radio advert path-hash mode (firmware path.hash.mode).
+prefix_bytes = 3
+
 [Admin]
 # Local admin API (binds to 127.0.0.1)
 enabled = false
@@ -243,12 +250,6 @@ respond_to_dms = true
 # mesh and are not likely to get recieve a response.
 # Default: 64 - to not change behavior on existing installations
 max_response_hops = 7
-
-# Set a custom prefix length for the public keys to identify repeaters
-# 1 = 2 hex chars (e.g. 7E), 2 = 4 hex chars (e.g. 7E42). Also used as the mesh
-# graph key length; if the mesh often uses 2-byte paths, set to 2 to avoid
-# conflating distinct links (see Path Command / path-command-config.md).
-prefix_bytes = 1
 
 # List of region scopes (comma-separated) that the bot will reply to when messages arrive on those scopes.
 # Replies mirror scope via RF correlation (TC_FLOOD / GRP_TXT); stale ADVERT/other packets are not used for scope.
