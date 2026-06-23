@@ -7,6 +7,8 @@ Contains the main bot class and message processing logic
 import asyncio
 import atexit
 import configparser
+import functools
+import inspect
 import json
 import logging
 import signal
@@ -115,6 +117,50 @@ class _BotAdminServer(threading.Thread):
             app.run(host="127.0.0.1", port=self._port, threaded=True)
         except Exception as exc:  # noqa: BLE001
             self._bot.logger.error("BotAdminServer failed to start: %s", exc)
+
+
+class _SerializedCommands:
+    """Serializing proxy around ``meshcore.commands``.
+
+    The companion firmware processes one host serial frame per main-loop
+    iteration and has no mid-frame resync: a burst of concurrent commands can
+    overrun the radio's USB-CDC RX buffer, drop a byte, and permanently desync
+    its frame parser (commands stop being acted on while RX push frames keep
+    flowing). The bot issues commands from many independent asyncio tasks
+    (sends, channel/contact ops, scheduler ops, health probes, auto message
+    fetch) with no shared serialization.
+
+    This proxy routes every coroutine command through a single per-bot lock and
+    enforces a minimum inter-command interval, guaranteeing at most one
+    in-flight companion frame at a time. Non-coroutine attributes are passed
+    through untouched, so library internals that read ``_sender_func``,
+    ``default_timeout`` etc. are unaffected. ``meshcore_cli.next_cmd`` calls are
+    serialized too, since they dispatch through this same ``commands`` object.
+    """
+
+    __slots__ = ("_bot", "_commands")
+
+    def __init__(self, bot: "MeshCoreBot", commands: Any) -> None:
+        object.__setattr__(self, "_bot", bot)
+        object.__setattr__(self, "_commands", commands)
+
+    def __getattr__(self, name: str) -> Any:
+        commands = object.__getattribute__(self, "_commands")
+        attr = getattr(commands, name)
+        if not inspect.iscoroutinefunction(attr):
+            return attr
+        bot = object.__getattribute__(self, "_bot")
+
+        @functools.wraps(attr)
+        async def _serialized(*args: Any, **kwargs: Any) -> Any:
+            async with bot._get_radio_cmd_lock():
+                await bot._pace_radio_command()
+                return await attr(*args, **kwargs)
+
+        return _serialized
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(object.__getattribute__(self, "_commands"), name, value)
 
 
 class MeshCoreBot:
@@ -353,6 +399,20 @@ class MeshCoreBot:
         # Transport reconnect (serial/BLE/TCP) — lock created when event loop runs
         self._transport_reconnect_lock: asyncio.Lock | None = None
         self._transport_reconnect_in_progress = False
+
+        # Serialize host->radio commands: one companion frame in flight at a
+        # time, with a minimum inter-command gap so the firmware's single
+        # serial loop can drain its RX buffer between frames. Prevents the
+        # USB-CDC overrun / parser-desync failure mode. Lock is created lazily
+        # once an event loop is running (see _get_radio_cmd_lock).
+        self._radio_cmd_lock: asyncio.Lock | None = None
+        self._radio_cmd_last_ts: float = 0.0
+        self._radio_cmd_min_interval = max(
+            0.0,
+            self.config.getfloat(
+                'Connection', 'command_min_interval_ms', fallback=30.0
+            ) / 1000.0,
+        )
 
     @property
     def bot_root(self) -> Path:
@@ -1241,14 +1301,14 @@ long_jokes = false
 
         Reads reconnect settings from [Connection]:
           reconnect_max_retries  – max attempts before giving up (0 = unlimited, default 0)
-          reconnect_delay_seconds – initial wait between attempts (default 5)
+          reconnect_delay_seconds – initial wait between attempts (default 10)
           reconnect_max_delay_seconds – cap on wait time (default 60)
 
         Returns:
             bool: True if reconnection succeeded, False if max retries exhausted or shutdown.
         """
         max_retries = self.config.getint('Connection', 'reconnect_max_retries', fallback=0)
-        delay = self.config.getfloat('Connection', 'reconnect_delay_seconds', fallback=5.0)
+        delay = self.config.getfloat('Connection', 'reconnect_delay_seconds', fallback=10.0)
         max_delay = self.config.getfloat('Connection', 'reconnect_max_delay_seconds', fallback=60.0)
 
         attempt = 0
@@ -1349,6 +1409,52 @@ long_jokes = false
         finally:
             self._transport_reconnect_in_progress = False
 
+    def _get_radio_cmd_lock(self) -> asyncio.Lock:
+        """Return the lock that serializes host->radio commands.
+
+        Created lazily so it binds to the running event loop.
+        """
+        if self._radio_cmd_lock is None:
+            self._radio_cmd_lock = asyncio.Lock()
+        return self._radio_cmd_lock
+
+    async def _pace_radio_command(self) -> None:
+        """Enforce a minimum gap between consecutive companion frames.
+
+        Must be called while holding the radio command lock so the timestamp
+        bookkeeping stays serialized.
+        """
+        interval = self._radio_cmd_min_interval
+        if interval <= 0:
+            return
+        now = time.monotonic()
+        wait = interval - (now - self._radio_cmd_last_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._radio_cmd_last_ts = time.monotonic()
+
+    def _install_command_serializer(self) -> None:
+        """Wrap ``meshcore.commands`` so every command is serialized + paced.
+
+        Idempotent and safe to call after each (re)connect. Wrapping the
+        ``commands`` attribute in place means existing call sites
+        (``self.meshcore.commands.*`` and ``meshcore_cli.next_cmd``) are
+        serialized automatically with no per-call changes.
+        """
+        if not self.meshcore:
+            return
+        cmds = getattr(self.meshcore, "commands", None)
+        if cmds is None or isinstance(cmds, _SerializedCommands):
+            return
+        try:
+            self.meshcore.commands = _SerializedCommands(self, cmds)
+            self.logger.debug(
+                "Installed serialized command gateway (min interval %.0fms)",
+                self._radio_cmd_min_interval * 1000,
+            )
+        except (AttributeError, TypeError) as e:
+            self.logger.warning(f"Could not install command serializer: {e}")
+
     async def connect(self) -> bool:
         """Connect to MeshCore node using official package.
 
@@ -1399,6 +1505,10 @@ long_jokes = false
 
             # Route meshcore library output through the bot's handlers (including log file)
             self._configure_meshcore_debug_logging(radio_debug)
+
+            # Serialize all host->radio commands before issuing any (the connect
+            # init burst — contacts, channel fetch, clock, name — runs through it).
+            self._install_command_serializer()
 
             if self.meshcore and self.meshcore.is_connected:
                 self.connected = True

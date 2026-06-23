@@ -30,7 +30,10 @@ reconnect_max_retries = 0
 
 # Initial delay in seconds between reconnect attempts
 # Doubles after each failed attempt (exponential backoff) up to reconnect_max_delay_seconds
-reconnect_delay_seconds = 5
+# Each reconnect re-runs the full init sequence (contacts, channel scan, clock,
+# name); a longer initial delay avoids hammering a flapping radio with repeated
+# command bursts. 10s is a good balance between recovery speed and gentleness.
+reconnect_delay_seconds = 10
 
 # Maximum delay in seconds between reconnect attempts (cap on exponential backoff)
 reconnect_max_delay_seconds = 60
@@ -58,6 +61,21 @@ radio_offline_alert_enabled = false
 
 # Optional radio-offline alert recipients (comma-separated; empty = nightly recipients)
 radio_offline_alert_email =
+
+# Minimum gap in milliseconds between consecutive commands sent to the radio.
+# The companion firmware handles one host serial frame per main-loop iteration
+# and cannot resync a corrupted/partial frame; bursting commands can overrun the
+# radio's USB-CDC RX buffer, drop a byte, and desync its parser (symptom: the
+# radio keeps feeding received packets to the host but stops acting on commands).
+# All host->radio commands are serialized to one in-flight frame at a time
+# regardless of this value; this only controls the spacing between them.
+# 0 disables pacing. Default 30.
+command_min_interval_ms = 30
+
+# Delay in milliseconds between each per-channel read during the connect-time
+# channel scan. Keeps the connect/reconnect init burst gentle on the firmware.
+# Default 300.
+channel_fetch_interval_ms = 300
 
 [Bot]
 # Bot name for identification and logging
