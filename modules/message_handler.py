@@ -3257,9 +3257,12 @@ class MessageHandler:
             f"Processing message: '{message.content}' from {message.sender_id} in {'DM' if message.is_dm else message.channel}"
         )
 
-        # Check for advert command (DM only)
+        # Check for advert command (DM only) — exempt from command_prefix normalization
         if message.is_dm and message.content.strip().lower() == "advert":
             await self.bot.command_manager.handle_advert_command(message)
+            return
+
+        if not self.bot.command_manager.normalize_command_content(message):
             return
 
         # Check for keywords and custom syntax

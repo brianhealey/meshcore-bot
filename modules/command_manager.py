@@ -604,6 +604,41 @@ class CommandManager:
         prefix = self.bot.config.get('Bot', 'command_prefix', fallback='')
         return prefix.strip() if prefix else ''
 
+    def normalize_command_content(self, message: MeshMessage) -> bool:
+        """Strip configured command prefix or legacy ``!`` once per message.
+
+        Idempotent: safe to call from ``process_message`` and again from
+        ``check_keywords`` when tests invoke matching without the handler.
+
+        Args:
+            message: Incoming message whose ``content`` is updated in place.
+
+        Returns:
+            True when the message may be evaluated as a command trigger.
+            False when ``command_prefix`` is set and the raw text did not
+            start with it (``content`` is left unchanged in that case).
+        """
+        raw = (message.content or '').strip()
+        if getattr(message, '_command_prefix_normalized', False):
+            return getattr(message, '_command_eligible', True)
+
+        if self.command_prefix:
+            if not raw.startswith(self.command_prefix):
+                message._command_prefix_normalized = True
+                message._command_eligible = False
+                return False
+            content = raw[len(self.command_prefix):].strip()
+        else:
+            content = raw
+            if content.startswith('!'):
+                content = content[1:].strip()
+
+        message.content = content
+        message.content_lower = content.lower()
+        message._command_prefix_normalized = True
+        message._command_eligible = True
+        return True
+
     def format_keyword_response(self, response_format: str, message: MeshMessage) -> str:
         """Format a keyword response string with message data.
 
@@ -664,20 +699,11 @@ class CommandManager:
             List[tuple]: List of (trigger, response) tuples for matched keywords.
         """
         matches: list[tuple[str, str | None]] = []
+        if not getattr(message, '_command_prefix_normalized', False):
+            if not self.normalize_command_content(message):
+                return matches
+
         content = message.content.strip()
-
-        # Check for command prefix if configured
-        if self.command_prefix:
-            # If prefix is configured, message must start with it
-            if not content.startswith(self.command_prefix):
-                return matches  # No prefix, no match
-            # Strip the prefix
-            content = content[len(self.command_prefix):].strip()
-        else:
-            # If no prefix configured, strip legacy "!" prefix for backward compatibility
-            if content.startswith('!'):
-                content = content[1:].strip()
-
         content_lower = content.lower()
 
         # Check for help requests first (special handling)
@@ -835,18 +861,11 @@ class CommandManager:
         if not self.bot.config.has_section('RandomLine'):
             return None
 
-        # Start with the same content + prefix stripping logic as check_keywords()
-        content = (message.content or "").strip()
-
-        # Check for command prefix if configured
-        if self.command_prefix:
-            if not content.startswith(self.command_prefix):
+        if not getattr(message, '_command_prefix_normalized', False):
+            if not self.normalize_command_content(message):
                 return None
-            content = content[len(self.command_prefix):].strip()
-        else:
-            # Legacy "!" prefix compatibility
-            if content.startswith('!'):
-                content = content[1:].strip()
+
+        content = (message.content or '').strip()
 
         # Normalize: lowercase + collapse whitespace
         content_norm = " ".join(content.lower().split())
@@ -1655,21 +1674,9 @@ class CommandManager:
         Args:
             message: The message triggering the command execution.
         """
-        content = message.content.strip()
-
-        # Check for command prefix if configured
-        if self.command_prefix:
-            # If prefix is configured, message must start with it
-            if not content.startswith(self.command_prefix):
-                return  # No prefix, no match
-            # Strip the prefix
-            content = content[len(self.command_prefix):].strip()
-        else:
-            # If no prefix configured, strip legacy "!" prefix for backward compatibility
-            if content.startswith('!'):
-                content = content[1:].strip()
-
-        content = content.lower()
+        if not getattr(message, '_command_prefix_normalized', False):
+            if not self.normalize_command_content(message):
+                return
 
         # Check each command to see if it should execute
         for command_name, command in self.commands.items():

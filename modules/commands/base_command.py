@@ -818,28 +818,22 @@ class BaseCommand(ABC):
     def cleanup_message_for_matching(self, message: MeshMessage) -> str:
         """Clean up message text before keyword checking.
 
-        Strips the command prefix and, when respond_to_mentions is not 'false',
-        validates mention rules and strips all @[...] mentions. Also updates
-        message.content and message.content_lower with the cleaned text so that
-        downstream processing (the execute step) sees the same clean content.
+        Command prefix stripping is handled once by
+        ``CommandManager.normalize_command_content`` before matching. This
+        method validates mention rules and strips ``@[...]`` mentions when
+        ``respond_to_mentions`` is not ``false``. Updates ``message.content``
+        and ``message.content_lower`` so downstream ``execute()`` sees the same
+        cleaned text.
 
         Args:
             message: The incoming message.
 
         Returns:
             str: Cleaned, lowercased content ready for keyword comparison,
-                 or empty string if the message should be ignored (wrong prefix,
-                 or mentions present but bot not among them).
+                 or empty string if mentions are present but the bot is not
+                 among them.
         """
         content = message.content.strip()
-
-        if self._command_prefix:
-            if not content.startswith(self._command_prefix):
-                return ""
-            content = content[len(self._command_prefix):].strip()
-        else:
-            if content.startswith('!'):
-                content = content[1:].strip()
 
         mention_mode = self.bot.config.get('Bot', 'respond_to_mentions', fallback='also').strip().lower()
         if mention_mode != 'false':

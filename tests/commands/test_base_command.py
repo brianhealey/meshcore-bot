@@ -409,20 +409,20 @@ class TestCleanupMessageForMatching:
         assert cmd.cleanup_message_for_matching(msg) == "testcmd"
 
     # ---------------------------------------------------------------- prefix -
-    def test_strips_legacy_bang_prefix(self, command_mock_bot):
-        """No command_prefix configured: legacy '!' is stripped."""
+    def test_cleanup_does_not_strip_legacy_bang_prefix(self, command_mock_bot):
+        """Prefix stripping is handled by CommandManager.normalize_command_content."""
         command_mock_bot.config.set("Bot", "respond_to_mentions", "false")
         cmd = self._cmd(command_mock_bot)
         msg = mock_message(content="!testcmd")
-        assert cmd.cleanup_message_for_matching(msg) == "testcmd"
+        assert cmd.cleanup_message_for_matching(msg) == "!testcmd"
 
-    def test_wrong_command_prefix_returns_empty(self, command_mock_bot):
-        """Configured command_prefix mismatch → empty string (no match)."""
+    def test_cleanup_does_not_gate_on_command_prefix(self, command_mock_bot):
+        """cleanup_message_for_matching does not reject missing command_prefix."""
         command_mock_bot.config.set("Bot", "respond_to_mentions", "false")
         command_mock_bot.config.set("Bot", "command_prefix", "!")
         cmd = self._cmd(command_mock_bot)
-        msg = mock_message(content="testcmd")  # missing the ! prefix
-        assert cmd.cleanup_message_for_matching(msg) == ""
+        msg = mock_message(content="testcmd")
+        assert cmd.cleanup_message_for_matching(msg) == "testcmd"
 
     # ---------------------------------------------- matches_keyword integration
     def test_matches_keyword_with_bot_mention(self, command_mock_bot):

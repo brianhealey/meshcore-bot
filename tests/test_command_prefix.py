@@ -6,7 +6,7 @@ Tests that all commands properly handle command prefixes when enabled
 
 from configparser import ConfigParser
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -66,106 +66,127 @@ def mock_message():
     )
 
 
+def _make_manager(mock_bot, commands=None):
+    with patch('modules.command_manager.PluginLoader') as mock_loader_class:
+        mock_loader = Mock()
+        mock_loader.load_all_plugins = Mock(return_value=commands or {})
+        mock_loader_class.return_value = mock_loader
+        return CommandManager(mock_bot)
+
+
+def _msg(content: str) -> MeshMessage:
+    return MeshMessage(
+        content=content,
+        sender_id="TestUser",
+        channel="general",
+        is_dm=False,
+    )
+
+
+class ExecuteOnlyCommand(BaseCommand):
+    """Command that handles its own response via execute() (no response format)."""
+
+    name = "path"
+    keywords = ['path', 'p']
+    description = "Path command for prefix regression tests"
+    category = "test"
+
+    async def execute(self, message: MeshMessage) -> bool:
+        return True
+
+
 class TestCommandPrefix:
     """Test command prefix functionality"""
 
     def test_no_prefix_allows_commands(self, mock_bot, mock_message):
         """Test that without prefix configured, commands work normally"""
         mock_bot.config.set('Bot', 'command_prefix', '')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match without prefix
+        assert manager.normalize_command_content(mock_message) is True
         assert command.matches_keyword(mock_message) is True
 
-        # Should also match with legacy ! prefix
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg("!test")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
     def test_prefix_required_when_configured(self, mock_bot, mock_message):
         """Test that when prefix is configured, it's required"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with prefix
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg("!test")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "test"
-        assert command.matches_keyword(mock_message) is False
+        unprefixed = _msg("test")
+        assert manager.normalize_command_content(unprefixed) is False
 
     def test_dot_prefix(self, mock_bot, mock_message):
         """Test dot prefix (e.g., .ping)"""
         mock_bot.config.set('Bot', 'command_prefix', '.')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with dot prefix
-        mock_message.content = ".test"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg(".test")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "test"
-        assert command.matches_keyword(mock_message) is False
+        unprefixed = _msg("test")
+        assert manager.normalize_command_content(unprefixed) is False
 
     def test_single_char_prefix(self, mock_bot, mock_message):
         """Test single character prefix (e.g., bping)"""
         mock_bot.config.set('Bot', 'command_prefix', 'b')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with 'b' prefix
-        mock_message.content = "btest"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg("btest")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "test"
-        assert command.matches_keyword(mock_message) is False
+        unprefixed = _msg("test")
+        assert manager.normalize_command_content(unprefixed) is False
 
     def test_multi_char_prefix(self, mock_bot, mock_message):
         """Test multi-character prefix (e.g., abcping)"""
         mock_bot.config.set('Bot', 'command_prefix', 'abc')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with 'abc' prefix
-        mock_message.content = "abctest"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg("abctest")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "test"
-        assert command.matches_keyword(mock_message) is False
-
-        # Should NOT match with partial prefix
-        mock_message.content = "abtest"
-        assert command.matches_keyword(mock_message) is False
+        assert manager.normalize_command_content(_msg("test")) is False
+        assert manager.normalize_command_content(_msg("abtest")) is False
 
     def test_prefix_with_whitespace(self, mock_bot, mock_message):
         """Test that prefix works with whitespace after it"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with prefix and space
-        mock_message.content = "! test"
-        assert command.matches_keyword(mock_message) is True
+        spaced = _msg("! test")
+        assert manager.normalize_command_content(spaced) is True
+        assert command.matches_keyword(spaced) is True
 
-        # Should match with prefix and no space
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
+        tight = _msg("!test")
+        assert manager.normalize_command_content(tight) is True
+        assert command.matches_keyword(tight) is True
 
     def test_prefix_with_keyword_variations(self, mock_bot, mock_message):
         """Test prefix with different keyword variations"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Test first keyword
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
-
-        # Test second keyword
-        mock_message.content = "!t"
-        assert command.matches_keyword(mock_message) is True
-
-        # Test keyword with arguments
-        mock_message.content = "!test arg1 arg2"
-        assert command.matches_keyword(mock_message) is True
+        for content in ("!test", "!t", "!test arg1 arg2"):
+            msg = _msg(content)
+            assert manager.normalize_command_content(msg) is True
+            assert command.matches_keyword(msg) is True
 
     def test_hello_command_with_prefix(self, mock_bot, mock_message):
         """Test hello command specifically with prefix"""
@@ -173,30 +194,28 @@ class TestCommandPrefix:
         mock_bot.config.set('Bot', 'bot_name', 'TestBot')
         mock_bot.config.add_section('Hello_Command')
         mock_bot.config.set('Hello_Command', 'enabled', 'true')
+        manager = _make_manager(mock_bot)
         command = HelloCommand(mock_bot)
 
-        # Should match with prefix
-        mock_message.content = "!hello"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg("!hello")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "hello"
-        assert command.matches_keyword(mock_message) is False
+        assert manager.normalize_command_content(_msg("hello")) is False
 
     def test_ping_command_with_prefix(self, mock_bot, mock_message):
         """Test ping command with prefix"""
         mock_bot.config.set('Bot', 'command_prefix', '.')
         mock_bot.config.add_section('Ping_Command')
         mock_bot.config.set('Ping_Command', 'enabled', 'true')
+        manager = _make_manager(mock_bot)
         command = PingCommand(mock_bot)
 
-        # Should match with dot prefix
-        mock_message.content = ".ping"
-        assert command.matches_keyword(mock_message) is True
+        prefixed = _msg(".ping")
+        assert manager.normalize_command_content(prefixed) is True
+        assert command.matches_keyword(prefixed) is True
 
-        # Should NOT match without prefix
-        mock_message.content = "ping"
-        assert command.matches_keyword(mock_message) is False
+        assert manager.normalize_command_content(_msg("ping")) is False
 
     def test_command_manager_with_prefix(self, mock_bot, mock_message):
         """Test CommandManager handles prefix correctly"""
@@ -206,87 +225,110 @@ class TestCommandPrefix:
         mock_bot.config.add_section('Custom_Syntax')
         mock_bot.config.set('Custom_Syntax', 'custom_syntax', '')
 
-        # Mock plugin loader to return empty commands for simplicity
-        with patch('modules.command_manager.PluginLoader') as mock_loader_class:
-            mock_loader = Mock()
-            mock_loader.load_all_plugins = Mock(return_value={})
-            mock_loader_class.return_value = mock_loader
+        manager = _make_manager(mock_bot)
 
-            manager = CommandManager(mock_bot)
-
-            # Should return empty matches for message without prefix
-            mock_message.content = "test"
-            matches = manager.check_keywords(mock_message)
-            assert matches == []
-
-            # Should process message with prefix
-            mock_message.content = "!test"
-            matches = manager.check_keywords(mock_message)
-            # Will be empty because no commands loaded, but should process without error
-            assert isinstance(matches, list)
+        assert manager.check_keywords(_msg("test")) == []
+        assert isinstance(manager.check_keywords(_msg("!test")), list)
 
     def test_prefix_with_mentions(self, mock_bot, mock_message):
         """Test that prefix works correctly with @[username] mentions"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
         mock_bot.config.set('Bot', 'bot_name', 'TestBot')
+        mock_bot.config.set('Bot', 'respond_to_mentions', 'also')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Mock self_info to return bot name
         mock_bot.meshcore = Mock()
         mock_bot.meshcore.self_info = {'name': 'TestBot'}
 
-        # Should match with prefix and bot mention
-        mock_message.content = "!@[TestBot] test"
-        assert command.matches_keyword(mock_message) is True
+        bot_mention = _msg("! test")
+        assert manager.normalize_command_content(bot_mention) is True
+        assert command.matches_keyword(bot_mention) is True
 
-        # Should NOT match with prefix but other user mention
-        mock_message.content = "!@[OtherUser] test"
-        assert command.matches_keyword(mock_message) is False
+        other_mention = _msg("!@[OtherUser] test")
+        assert manager.normalize_command_content(other_mention) is True
+        assert command.matches_keyword(other_mention) is False
 
     def test_different_prefixes_dont_match(self, mock_bot, mock_message):
         """Test that wrong prefix doesn't match"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
-        command = MockTestCommand(mock_bot)
+        manager = _make_manager(mock_bot)
 
-        # Should NOT match with wrong prefix
-        mock_message.content = ".test"
-        assert command.matches_keyword(mock_message) is False
-
-        mock_message.content = "btest"
-        assert command.matches_keyword(mock_message) is False
-
-        mock_message.content = "abctest"
-        assert command.matches_keyword(mock_message) is False
+        for content in (".test", "btest", "abctest"):
+            assert manager.normalize_command_content(_msg(content)) is False
 
     def test_prefix_case_sensitive(self, mock_bot, mock_message):
         """Test that prefix matching is case-sensitive"""
         mock_bot.config.set('Bot', 'command_prefix', '!')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match with exact prefix
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
+        for content in ("!test", "!TEST"):
+            msg = _msg(content)
+            assert manager.normalize_command_content(msg) is True
+            assert command.matches_keyword(msg) is True
 
-        # Prefix matching is case-sensitive, so different case shouldn't match
-        # (This tests the actual behavior - prefixes are case-sensitive)
-        mock_message.content = "!TEST"  # Prefix is still '!', so this should match
-        assert command.matches_keyword(mock_message) is True  # '!' is same case
-
-        # But if prefix is lowercase, uppercase shouldn't match
         mock_bot.config.set('Bot', 'command_prefix', 'b')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
-        mock_message.content = "Btest"  # Uppercase B
-        assert command.matches_keyword(mock_message) is False  # Should not match lowercase 'b'
+        assert manager.normalize_command_content(_msg("Btest")) is False
 
     def test_empty_prefix_string(self, mock_bot, mock_message):
         """Test that empty string prefix means no prefix required"""
         mock_bot.config.set('Bot', 'command_prefix', '')
+        manager = _make_manager(mock_bot)
         command = MockTestCommand(mock_bot)
 
-        # Should match without prefix
-        mock_message.content = "test"
-        assert command.matches_keyword(mock_message) is True
+        plain = _msg("test")
+        assert manager.normalize_command_content(plain) is True
+        assert command.matches_keyword(plain) is True
 
-        # Should also match with legacy ! prefix
-        mock_message.content = "!test"
-        assert command.matches_keyword(mock_message) is True
+        legacy = _msg("!test")
+        assert manager.normalize_command_content(legacy) is True
+        assert command.matches_keyword(legacy) is True
+
+    def test_normalize_is_idempotent(self, mock_bot, mock_message):
+        mock_bot.config.set('Bot', 'command_prefix', '!')
+        manager = _make_manager(mock_bot)
+
+        mock_message.content = "!path ab"
+        assert manager.normalize_command_content(mock_message) is True
+        assert mock_message.content == "path ab"
+        assert manager.normalize_command_content(mock_message) is True
+        assert mock_message.content == "path ab"
+
+    @pytest.mark.asyncio
+    async def test_execute_command_runs_after_check_keywords_with_prefix(self, mock_bot, mock_message):
+        """Regression: execute()-based commands must run when command_prefix is set."""
+        mock_bot.config.set('Bot', 'command_prefix', '!')
+        mock_bot.config.set('Bot', 'respond_to_mentions', 'false')
+        manager = _make_manager(mock_bot)
+        mock_bot.command_manager = manager
+        path_cmd = ExecuteOnlyCommand(mock_bot)
+        path_cmd.execute = AsyncMock(return_value=True)
+        path_cmd.send_response = AsyncMock(return_value=True)
+        manager.commands['path'] = path_cmd
+        mock_message.content = "!path ab"
+
+        matches = manager.check_keywords(mock_message)
+        assert ('path', None) in matches
+
+        await manager.execute_commands(mock_message)
+        path_cmd.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_response_format_command_still_works_with_prefix(self, mock_bot, mock_message):
+        """Commands with response formats are handled in check_keywords."""
+        mock_bot.config.set('Bot', 'command_prefix', '!')
+        mock_bot.config.add_section('Ping_Command')
+        mock_bot.config.set('Ping_Command', 'enabled', 'true')
+        mock_bot.config.add_section('Keywords')
+        mock_bot.config.set('Keywords', 'ping', 'Pong!')
+
+        ping_cmd = PingCommand(mock_bot)
+        manager = _make_manager(mock_bot, commands={'ping': ping_cmd})
+        mock_bot.command_manager = manager
+        mock_message.content = "!ping"
+
+        matches = manager.check_keywords(mock_message)
+        assert any(name == 'ping' and response == 'Pong!' for name, response in matches)

@@ -417,10 +417,25 @@ class TestGetAvailableCommandsList:
         bot = _make_bot()
         mock_ping = MagicMock()
         mock_ping.name = "ping"
+        mock_ping.requires_admin_access = Mock(return_value=False)
         bot.command_manager.commands = {"ping": mock_ping}
         cmd = HelpCommand(bot)
         result = cmd.get_available_commands_list()
         assert "ping" in result
+
+    def test_excludes_admin_commands(self):
+        bot = _make_bot()
+        mock_ping = MagicMock()
+        mock_ping.name = "ping"
+        mock_ping.requires_admin_access = Mock(return_value=False)
+        mock_repeater = MagicMock()
+        mock_repeater.name = "repeater"
+        mock_repeater.requires_admin_access = Mock(return_value=True)
+        bot.command_manager.commands = {"ping": mock_ping, "repeater": mock_repeater}
+        cmd = HelpCommand(bot)
+        result = cmd.get_available_commands_list()
+        assert "ping" in result
+        assert "repeater" not in result
 
     def test_with_max_length(self):
         bot = _make_bot()
@@ -480,6 +495,51 @@ class TestGetAvailableCommandsList:
         cmd = HelpCommand(bot)
         result = cmd.get_available_commands_list()
         assert "ping" in result
+
+    def test_stats_ordering_includes_unused_commands(self):
+        """Unused enabled commands still appear in help when stats table exists."""
+        from contextlib import contextmanager
+
+        bot = _make_bot()
+        conn = _create_tracked_connection()
+        conn.execute("""
+            CREATE TABLE command_stats (
+                id INTEGER PRIMARY KEY,
+                timestamp INTEGER,
+                sender_id TEXT,
+                command_name TEXT,
+                channel TEXT,
+                is_dm BOOLEAN,
+                response_sent BOOLEAN
+            )
+        """)
+        conn.execute(
+            "INSERT INTO command_stats (timestamp, sender_id, command_name, channel, is_dm, response_sent) "
+            "VALUES (1, 'u1', 'test', 'general', 0, 1)"
+        )
+        conn.commit()
+
+        db = MagicMock()
+
+        @contextmanager
+        def _conn_ctx():
+            yield conn
+
+        db.connection = _conn_ctx
+        bot.db_manager = db
+
+        mock_test = MagicMock()
+        mock_test.name = "test"
+        mock_path = MagicMock()
+        mock_path.name = "path"
+        bot.command_manager.commands = {"test": mock_test, "path": mock_path}
+        bot.command_manager.plugin_loader.keyword_mappings = {"test": "test", "path": "path"}
+
+        cmd = HelpCommand(bot)
+        result = cmd.get_available_commands_list()
+        assert "test" in result
+        assert "path" in result
+        assert result.index("test") < result.index("path")
 
     def test_db_exception_falls_back_gracefully(self):
         """If DB raises, falls back to sorted command names."""

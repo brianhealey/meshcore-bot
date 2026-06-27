@@ -149,7 +149,10 @@ class HelpCommand(BaseCommand):
         return help_text
 
     def _is_command_valid_for_channel(self, cmd_name: str, cmd_instance: Any, message: Optional[MeshMessage]) -> bool:
-        """Return True if this command is valid in the message's channel context."""
+        """Return True if this command should appear in general help for the context."""
+        if hasattr(cmd_instance, 'requires_admin_access') and callable(cmd_instance.requires_admin_access):
+            if cmd_instance.requires_admin_access() is True:
+                return False
         if message is None:
             return True
         if hasattr(cmd_instance, 'is_channel_allowed') and callable(cmd_instance.is_channel_allowed):
@@ -171,12 +174,13 @@ class HelpCommand(BaseCommand):
         Queries usage statistics to order commands by popularity. Ensures each
         command is listed only once using its primary name. When message is
         provided, only returns commands valid for the message's channel (respects
-        per-command channel overrides and channel_keywords). When max_length is
-        set, truncates the list so the result fits (appends " (N more)" when needed).
+        per-command channel overrides and channel_keywords). Commands that
+        require admin access are always omitted. When max_length is set, truncates
+        the list so the result fits (appends " (N more)" when needed).
 
         Args:
             message: Optional message for context filtering. When provided, only
-                commands that can execute in this channel are included.
+                non-admin commands that can execute in this channel are included.
             max_length: Optional max length for the returned list (for LoRa).
                 When set, list is truncated and may end with " (N more)".
 
@@ -254,22 +258,15 @@ class HelpCommand(BaseCommand):
                     primary_name = self.bot.command_manager.commands[cmd_name].name if hasattr(self.bot.command_manager.commands[cmd_name], 'name') else cmd_name
                     command_counts[primary_name] = 0
 
-            # If we have stats, sort by count descending, otherwise use all commands
+            # Order by usage when stats exist; always include every channel-valid command
+            all_command_names = sorted(primary_names)
             if command_counts:
-                # Sort by count descending, then by name for consistency
-                sorted_commands = sorted(
-                    command_counts.items(),
-                    key=lambda x: (-x[1], x[0])
+                command_names = sorted(
+                    all_command_names,
+                    key=lambda name: (-command_counts.get(name, 0), name),
                 )
-                # Extract just the command names (only primary names, no aliases)
-                command_names = [name for name, _ in sorted_commands]
             else:
-                # Fallback: use all primary command names (filtered by channel)
-                command_names = sorted([
-                    cmd.name if hasattr(cmd, 'name') else name
-                    for name, cmd in self.bot.command_manager.commands.items()
-                    if self._is_command_valid_for_channel(name, cmd, message)
-                ])
+                command_names = all_command_names
 
             # Apply max_length truncation when reserved for suffix (e.g. " | More: 'help <command>'")
             return self._format_commands_list_to_length(command_names, max_length)

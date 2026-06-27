@@ -39,14 +39,7 @@ class ChannelPauseCommand(BaseCommand):
         )
 
     def _stripped_content_lower(self, message: MeshMessage) -> str:
-        content = message.content.strip()
-        if self._command_prefix:
-            if not content.startswith(self._command_prefix):
-                return ""
-            content = content[len(self._command_prefix) :].strip()
-        elif content.startswith("!"):
-            content = content[1:].strip()
-        content = self._strip_mentions(content)
+        content = self._strip_mentions(message.content.strip())
         return content.lower()
 
     async def execute(self, message: MeshMessage) -> bool:
