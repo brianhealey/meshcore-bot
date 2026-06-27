@@ -91,8 +91,8 @@ class WxCommand(BaseCommand):
         if weather_provider == 'openmeteo' and WX_INTERNATIONAL_AVAILABLE:
             # Delegate to international weather command
             self.delegate_command = GlobalWxCommand(bot)
-            # Update keywords to match wx command for compatibility
-            self.delegate_command.keywords = ['wx', 'weather', 'wxa', 'wxalert']
+            # Use wx triggers plus any [Wx_Command] aliases loaded by BaseCommand.
+            self.delegate_command.keywords = list(self.keywords)
             self.delegate_command.description = "Get weather information for any location (usage: wx Tokyo)"
             self.logger.info("Weather provider set to 'openmeteo', delegating wx command to wx_international")
         else:
