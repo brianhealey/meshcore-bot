@@ -573,18 +573,6 @@ log_max_bytes = 5242880
 # log_backup_count: number of rotated backup files to keep (e.g. meshcore_bot.log.1 … .3)
 log_backup_count = 3
 
-[Custom_Syntax]
-# Custom syntax patterns for special message formats
-# Format: pattern = "response_format"
-# Available fields: {sender}, {phrase}, {connection_info}, {snr}, {timestamp}, {path}, {path_distance}, {firstlast_distance}
-# {phrase}: The text after the trigger (for custom syntax patterns)
-# {path_distance}: Total distance between all hops in path with locations (e.g., "123.4km (3 segs, 1 no-loc)")
-# {firstlast_distance}: Distance between first and last repeater in path (e.g., "45.6km" or empty if locations missing)
-# 
-# Note: The "t" command is now handled by the test command as an alias
-# "t phrase" works the same as "test phrase" - both use the test response format
-# Example: "t hello world" -> "ack {sender}: hello world | {connection_info}"
-
 [External_Data]
 # URL shortener API base (v.gd / is.gd-compatible create.php). Default: https://v.gd
 # See https://v.gd/apishorteningreference.php
