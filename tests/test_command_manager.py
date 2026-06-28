@@ -238,6 +238,32 @@ class TestCheckKeywords:
         matches = manager.check_keywords(msg)
         assert any(trigger == "help" for trigger, _ in matches)
 
+    def test_help_disabled_no_response(self, cm_bot):
+        """[Help_Command] enabled=false must suppress the help response.
+
+        The special help path bypasses the plugin loop (where can_execute() enforces
+        enablement), so it has to honor the flag itself.
+        """
+        mock_help = MagicMock()
+        mock_help.help_enabled = False
+        mock_help.keywords = ["help"]
+        mock_help.should_execute = Mock(return_value=False)
+        manager = make_manager(cm_bot, commands={"help": mock_help})
+        msg = mock_message(content="help", is_dm=True)
+        matches = manager.check_keywords(msg)
+        assert not any(trigger == "help" for trigger, _ in matches)
+
+    def test_help_enabled_responds_when_command_loaded(self, cm_bot):
+        """A loaded, enabled help command still produces a help response."""
+        cm_bot.config.set("Keywords", "help", "Help: ping, test")
+        mock_help = MagicMock()
+        mock_help.help_enabled = True
+        mock_help.keywords = ["help"]
+        manager = make_manager(cm_bot, commands={"help": mock_help})
+        msg = mock_message(content="help", is_dm=True)
+        matches = manager.check_keywords(msg)
+        assert any(trigger == "help" for trigger, _ in matches)
+
 
 class TestGetHelpForCommand:
     """Tests for command-specific help."""
