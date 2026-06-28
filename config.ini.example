@@ -284,6 +284,15 @@ max_response_hops = 7
 # You can use "region" or "#region" (the # is added if missing).
 # outgoing_flood_scope_override = #west
 
+# Optional per-channel outgoing flood scope defaults.
+# Keys are case-insensitive and may include or omit the leading # in the channel name.
+# Values may be region, #region, *, 0, None, or empty for global flood.
+# Precedence: explicit send scope, mirrored reply scope, plugin/service flood_scope,
+# per-channel flood_scope.<channel>, outgoing_flood_scope_override, then global flood.
+# flood_scope.general = #west
+# flood_scope.weather = #sea
+# flood_scope.#local = *
+
 [Banned_Users]
 # List of banned sender names (comma-separated). Matching is prefix (starts-with):
 # "Awful Username" also matches "Awful Username 🍆". No bot responses in channels or DMs.
