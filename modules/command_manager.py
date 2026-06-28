@@ -738,8 +738,16 @@ class CommandManager:
                         if not self.bot.config.getboolean('Channels', 'respond_to_dms', fallback=True):
                             break  # DMs disabled, skip help keyword
                     else:
-                        # For channel messages, check if channel is in monitor_channels
-                        if message.channel not in self.monitor_channels:
+                        # For channel messages, honor the help command's channel access:
+                        # its per-command `channels` override when set, otherwise the
+                        # global monitor_channels. Without this the special path would
+                        # ignore [Help_Command] channels = ... (it bypasses the plugin
+                        # loop where is_channel_allowed is normally enforced). Fall back
+                        # to a bare monitor_channels check when no help command is loaded.
+                        if help_command is not None and hasattr(help_command, 'is_channel_allowed'):
+                            if not help_command.is_channel_allowed(message):
+                                break  # Not allowed in this channel, skip help keyword
+                        elif message.channel not in self.monitor_channels:
                             break  # Channel not monitored, skip help keyword
                         # When channel_keywords is set, only allow listed triggers in channel
                         if not self._is_channel_trigger_allowed('help', message):
