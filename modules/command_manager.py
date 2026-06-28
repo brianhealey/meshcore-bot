@@ -705,6 +705,15 @@ class CommandManager:
 
         content_lower = content.lower()
 
+        # Persist the normalized (prefix-stripped) content to the shared message once,
+        # before iterating commands. Each command's cleanup_message_for_matching would
+        # otherwise re-strip/re-reject the prefix off this same object; the first
+        # keyword command would consume the prefix and break matching for every command
+        # after it. The flag tells per-command cleanup the prefix is already handled.
+        message.content = content
+        message.content_lower = content_lower
+        message.prefix_normalized = True
+
         # Check for help requests first (special handling)
         # Check both English "help" and translated help keywords
         help_keywords = ['help']

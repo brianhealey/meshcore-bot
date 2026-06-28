@@ -106,7 +106,9 @@ node_id =
 # Command prefix (optional)
 # If set, all commands must start with this prefix (e.g., "!", ".", "b", "abc")
 # Examples: "!" for !ping, "." for .ping, "b" for bping, "abc" for abcping
-# Leave empty or unset to allow commands without prefix (backward compatible)
+# The prefix applies uniformly to every command (including help); messages without
+# it are ignored. Leave empty or unset to allow commands without a prefix (backward
+# compatible; a leading "!" is still accepted in that mode).
 #command_prefix =
 
 # Respond to channel messages when the bot is mentioned via @[bot_name]
