@@ -443,3 +443,85 @@ class TestSatpassCommandToolSchema:
         assert "visual" not in params["required"]
         assert params["properties"]["satellite"]["type"] == "string"
         assert params["properties"]["visual"]["type"] == "boolean"
+
+
+class TestPathCommandToolSchema:
+    """Tests for path_command tool schema generation (US-012)."""
+
+    def test_path_command_has_destination_parameter_required(self):
+        """Test that path command has destination as required parameter."""
+        from modules.commands.path_command import PathCommand
+
+        params = PathCommand.parameters
+        destination_param = next((p for p in params if p["name"] == "destination"), None)
+
+        assert destination_param is not None
+        assert destination_param["required"] is True
+        assert destination_param["type"] == "string"
+        assert "node" in destination_param["description"].lower() or "path" in destination_param["description"].lower()
+
+    def test_path_command_description(self):
+        """Test that path command has correct description."""
+        from modules.commands.path_command import PathCommand
+
+        assert "repeater" in PathCommand.short_description.lower() or "path" in PathCommand.short_description.lower()
+
+    def test_path_command_generates_valid_tool_schema(self, tool_registry, mock_bot, mock_command_manager):
+        """Test that ToolRegistry generates valid schema for path_command."""
+        # Create a real-like path command with updated parameters
+        path_cmd = MagicMock()
+        path_cmd.name = "path"
+        path_cmd.short_description = "Analyze mesh network path to a destination node, showing repeaters and signal quality"
+        path_cmd.parameters = [
+            {
+                "name": "destination",
+                "description": "Node ID or hex path data to analyze (e.g., '01,5f' or destination node ID)",
+                "required": True,
+                "type": "string"
+            }
+        ]
+
+        # Add to mock command manager
+        mock_command_manager.commands = {"path": path_cmd}
+
+        # Generate schema
+        schema = tool_registry.generate_tool_schema(path_cmd)
+
+        # Verify schema structure
+        assert schema["type"] == "function"
+        assert schema["function"]["name"] == "path"
+        assert schema["function"]["description"] == path_cmd.short_description
+
+        # Verify parameters
+        params = schema["function"]["parameters"]
+        assert "destination" in params["properties"]
+
+        # Verify destination is required
+        assert "destination" in params["required"]
+        assert params["properties"]["destination"]["type"] == "string"
+
+    def test_path_command_in_all_tool_schemas(self, tool_registry, mock_bot, mock_command_manager):
+        """Test that path_command is included when available_tools contains 'path'."""
+        # Create a real-like path command
+        path_cmd = MagicMock()
+        path_cmd.name = "path"
+        path_cmd.short_description = "Analyze mesh network path to a destination node"
+        path_cmd.parameters = [
+            {
+                "name": "destination",
+                "description": "Node ID or hex path data",
+                "required": True,
+                "type": "string"
+            }
+        ]
+
+        # Add to mock command manager
+        mock_command_manager.commands = {"path": path_cmd}
+
+        # Get all schemas
+        schemas = tool_registry.get_all_tool_schemas()
+
+        # Verify path is included
+        path_schema = next((s for s in schemas if s["function"]["name"] == "path"), None)
+        assert path_schema is not None
+        assert "destination" in path_schema["function"]["parameters"]["required"]

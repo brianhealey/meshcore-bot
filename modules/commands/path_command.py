@@ -31,6 +31,14 @@ class PathCommand(BaseCommand):
     short_description = "Decode path data to show repeaters involved in message routing"
     usage = "path [hex_data]"
     examples = ["path", "decode"]
+    parameters = [
+        {
+            "name": "destination",
+            "description": "Node ID or hex path data to analyze (e.g., '01,5f' or destination node ID)",
+            "required": True,
+            "type": "string"
+        }
+    ]
 
     def __init__(self, bot):
         super().__init__(bot)

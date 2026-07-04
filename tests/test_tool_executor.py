@@ -637,3 +637,102 @@ class TestSatpassCommandToolExecution:
         )
 
         assert "Hubble" in result or "18:30" in result
+
+
+class TestPathCommandToolExecution:
+    """Tests for path_command tool execution (US-012)."""
+
+    async def test_path_command_with_node_id(self, tool_executor, sample_message, mock_command_manager):
+        """Test path command execution with node ID destination."""
+        async def set_path_response(msg):
+            # Verify message content has the node ID
+            assert 'A1B2' in msg.content
+            mock_path.last_response = "Path to A1B2: [01:Repeater1] → [5F:Repeater2] → [A1B2:Destination]"
+            return True
+
+        mock_path = AsyncMock()
+        mock_path.execute = set_path_response
+        mock_path.last_response = None
+        mock_path.parameters = [
+            {"name": "destination", "description": "Node ID or hex path data", "required": True, "type": "string"}
+        ]
+        mock_command_manager.commands = {'path': mock_path}
+
+        result = await tool_executor.execute_tool(
+            'path',
+            {'destination': 'A1B2'},
+            sample_message
+        )
+
+        assert "A1B2" in result
+        assert "Path" in result or "Repeater" in result
+
+    async def test_path_command_with_hex_path_data(self, tool_executor, sample_message, mock_command_manager):
+        """Test path command execution with hex path data."""
+        async def set_path_response(msg):
+            # Verify message contains the hex path
+            assert '01,5F,A1' in msg.content
+            mock_path.last_response = "Decoded path: [01:Gateway] → [5F:Repeater] → [A1:Node]"
+            return True
+
+        mock_path = AsyncMock()
+        mock_path.execute = set_path_response
+        mock_path.last_response = None
+        mock_path.parameters = [
+            {"name": "destination", "description": "Node ID or hex path data", "required": True, "type": "string"}
+        ]
+        mock_command_manager.commands = {'path': mock_path}
+
+        result = await tool_executor.execute_tool(
+            'path',
+            {'destination': '01,5F,A1'},
+            sample_message
+        )
+
+        assert "Decoded" in result or "Gateway" in result
+
+    async def test_path_command_shows_repeaters(self, tool_executor, sample_message, mock_command_manager):
+        """Test path command execution shows repeater information."""
+        async def set_path_response(msg):
+            assert 'FF' in msg.content
+            mock_path.last_response = "Path analysis:\n[01:Gateway] SNR: 8.5 dB\n[5F:MainRepeater] SNR: 7.2 dB\n[FF:Edge]"
+            return True
+
+        mock_path = AsyncMock()
+        mock_path.execute = set_path_response
+        mock_path.last_response = None
+        mock_path.parameters = [
+            {"name": "destination", "description": "Node ID or hex path data", "required": True, "type": "string"}
+        ]
+        mock_command_manager.commands = {'path': mock_path}
+
+        result = await tool_executor.execute_tool(
+            'path',
+            {'destination': 'FF'},
+            sample_message
+        )
+
+        assert "SNR" in result or "Repeater" in result or "Gateway" in result
+
+    async def test_path_command_with_signal_quality(self, tool_executor, sample_message, mock_command_manager):
+        """Test path command execution includes signal quality metrics."""
+        async def set_path_response(msg):
+            assert 'C4' in msg.content
+            mock_path.last_response = "Route to C4:\n01 → 5F (RSSI: -85 dBm, SNR: 9.1 dB)\n5F → C4 (RSSI: -92 dBm, SNR: 6.5 dB)"
+            return True
+
+        mock_path = AsyncMock()
+        mock_path.execute = set_path_response
+        mock_path.last_response = None
+        mock_path.parameters = [
+            {"name": "destination", "description": "Node ID or hex path data", "required": True, "type": "string"}
+        ]
+        mock_command_manager.commands = {'path': mock_path}
+
+        result = await tool_executor.execute_tool(
+            'path',
+            {'destination': 'C4'},
+            sample_message
+        )
+
+        assert "RSSI" in result or "SNR" in result or "dB" in result
