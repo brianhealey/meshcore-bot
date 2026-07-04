@@ -246,3 +246,23 @@ Branch: ralph/llm-integration
   - All acceptance criteria met: mocked Ollama, multi-turn context, clear-context, chunking, error handling, pruning
 ---
 
+## 2026-07-04 - US-015
+- Created comprehensive documentation for LLM integration feature
+- Files changed:
+  - docs/llm-integration.md (new file - 579 lines)
+  - docs/command-reference.md (added AI Commands section, updated TOC)
+  - README.md (added LLM integration to features list)
+  - scripts/ralph/prd.json (updated US-015 passes: true)
+- **Learnings for future iterations:**
+  - Documentation pattern: Quick Start → Configuration → Usage → Advanced → FAQ → Troubleshooting
+  - Service docs follow pattern: Features list, Quick Start (numbered steps), Configuration (with examples), Usage, FAQ
+  - Command reference follows template: name, usage, examples, response, features, configuration, notes
+  - Command reference organized by category: Basic, Information, Emergency, Gaming, Entertainment, AI, Sports, MeshCore Utility, Admin
+  - Table of Contents must be updated when adding new sections
+  - README features list includes link to detailed docs: [feature name](docs/filename.md)
+  - FAQ section should include common troubleshooting steps with commands to run
+  - Integration Details section documents database schema and architecture for developers
+  - All 2956 tests continue to pass - documentation changes don't affect test suite
+  - Comprehensive docs make features more accessible and reduce support burden
+---
+
