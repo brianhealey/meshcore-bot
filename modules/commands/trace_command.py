@@ -24,13 +24,13 @@ class TraceCommand(BaseCommand):
     cooldown_seconds = 2
     category = "meshcore_info"
 
-    short_description = "Test mesh network connectivity and measure signal quality (SNR/RSSI) along a route. Use for link diagnostics, connection testing, or measuring signal strength between nodes."
+    short_description = "Test mesh connectivity by sending trace packets and measure signal quality (SNR/RSSI). Use to test routes to specific nodes or check sender's connection. To test connectivity to a node, use nodes tool first to find the node ID, then pass it here (e.g., 'b1' for single hop test, or full path like '01,7a,b1')."
     usage = "trace [path]  or  tracer [path]"
-    examples = ["trace 01,7a,55", "trace feed,6ddf,feed", "tracer", "tracer 01,7a,55"]
+    examples = ["trace 01,7a,55", "trace feed,6ddf,feed", "tracer", "tracer 01,7a,55", "trace b1"]
     parameters = [
         {
             "name": "path",
-            "description": "Comma-separated hex path to test (e.g., '01,7a,55'). IMPORTANT: Omit this parameter (don't pass it at all) to automatically test the sender's own connection path - this is the recommended way to check 'my connectivity' or 'my connection'.",
+            "description": "Comma-separated hex path or single node ID to test (e.g., 'b1' tests 1-hop to node b1, '01,7a,55' tests multi-hop path through those nodes). Omit to test sender's own connection path automatically. Use nodes tool to find available node IDs before calling this.",
             "required": False,
             "type": "string"
         }
