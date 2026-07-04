@@ -18,7 +18,6 @@ from modules.commands.llm_command import LLMCommand
 from modules.db_manager import AsyncDBManager, DBManager
 from tests.conftest import mock_message
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

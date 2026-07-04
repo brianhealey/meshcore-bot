@@ -440,3 +440,89 @@ All development work for LLM tool calling integration is complete. The remaining
 
 ---
 
+## 2026-07-04 - US-015 (Manual Deployment Required)
+
+**Story Status: Requires Human Administrator**
+
+US-015 is a deployment and manual testing story that cannot be completed by autonomous agents. This story requires:
+
+1. SSH access to brian@10.100.10.49
+2. Deployment of code to /opt/meshcore-bot
+3. Running database migrations on production instance
+4. Restarting bot service
+5. Manual testing on live #beeboopbot channel
+6. Verification of real mesh network behavior
+
+**What autonomous development completed:**
+- All code implementation for LLM tool calling integration (US-001 through US-014)
+- All tests passing (3077 tests, 44.53% coverage)
+- All typechecks passing
+- All lints passing
+- Database migration ready (_m0014_extend_llm_context_for_commands)
+- Configuration documentation complete
+
+**Ready for deployment:**
+- Code is ready on branch: ralph/llm-tools-integration
+- Migration _m0014 will add command_name and sender_name columns to llm_conversation_context
+- Config settings documented in config.ini.example
+- Tool calling can be enabled via enable_tools=true in [LLM_Command] section
+- Available tools whitelist: wx,airplanes,satpass,path,stats,moon,sun,aurora
+
+**Deployment checklist for human administrator:**
+```bash
+# 1. SSH to production server
+ssh brian@10.100.10.49
+
+# 2. Navigate to bot directory
+cd /opt/meshcore-bot
+
+# 3. Pull latest changes from ralph/llm-tools-integration branch
+git fetch origin
+git checkout ralph/llm-tools-integration
+git pull
+
+# 4. Install any new dependencies (if needed)
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 5. Update config.ini with tool calling settings:
+# [LLM_Command]
+# enable_tools = true
+# max_tools_per_query = 3
+# tool_timeout = 10
+# available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora
+# include_user_mention = true
+# track_all_commands = true
+
+# 6. Restart bot service (migrations run automatically on startup)
+sudo systemctl restart meshcore-bot
+
+# 7. Check logs for migration success
+journalctl -u meshcore-bot -f
+
+# 8. Test natural language queries on #beeboopbot channel:
+# - "What's the weather in Seattle?"
+# - "Any planes overhead?"
+# - "When does ISS pass over?"
+# - "Show path to node !abc123"
+```
+
+**Manual testing verification:**
+- [ ] Migration _m0014 applied successfully (check logs)
+- [ ] Bot responds to natural language weather queries
+- [ ] Bot responds to natural language airplane queries
+- [ ] Bot responds to satellite pass queries
+- [ ] User mentions appear in channel responses ([@username] prefix)
+- [ ] User mentions skipped in DM responses
+- [ ] Command context stored in database for !wx, !airplanes, etc.
+- [ ] Multi-tool queries work (e.g., "weather and satellite passes")
+
+**Learnings for future iterations:**
+- Deployment stories (US-015) should be flagged as manual/admin-only in PRD planning
+- Autonomous agents can prepare all code but cannot deploy to production servers
+- All implementation work is complete and CI-green before deployment story
+- Database migrations are tested in CI but must be verified on production
+- Live mesh network testing requires physical radio hardware and real channels
+
+---
+
