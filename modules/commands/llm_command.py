@@ -170,6 +170,30 @@ class LLMCommand(BaseCommand):
         Returns:
             bool: True if execution was successful, False otherwise.
         """
+        # Build context key from message (channel name or user identifier)
+        context_key = self._build_context_key(message)
+
+        # Check if this is a clear-context request
+        if self._is_clear_context_request(message.content):
+            try:
+                success = await self.context_manager.clear_context(context_key)
+                if success:
+                    await self.send_response(message, "Conversation context cleared.")
+                    return True
+                else:
+                    await self.send_response(
+                        message,
+                        "Failed to clear context. Please try again."
+                    )
+                    return False
+            except Exception as e:
+                self.logger.error(f"Error clearing context for key '{context_key}': {e}")
+                await self.send_response(
+                    message,
+                    "An error occurred while clearing context."
+                )
+                return False
+
         # Extract the question from the message content
         question = self._extract_question(message.content)
 
@@ -179,9 +203,6 @@ class LLMCommand(BaseCommand):
                 "Usage: !ask <question> or !clear-context"
             )
             return False
-
-        # Build context key from message (channel name or user identifier)
-        context_key = self._build_context_key(message)
 
         try:
             # Load conversation context
@@ -301,3 +322,22 @@ class LLMCommand(BaseCommand):
         else:
             # Use channel name for channel messages
             return message.channel or "default"
+
+    def _is_clear_context_request(self, content: str) -> bool:
+        """Check if the message is a clear-context request.
+
+        Args:
+            content: The message content
+
+        Returns:
+            bool: True if this is a clear-context request, False otherwise
+        """
+        # Strip leading/trailing whitespace
+        content = content.strip()
+
+        # Remove command prefix (! or other configured prefix)
+        if content.startswith('!'):
+            content = content[1:].strip()
+
+        # Check if content matches 'clear-context' (case-insensitive)
+        return content.lower().startswith('clear-context')
