@@ -235,7 +235,16 @@ class LLMCommand(BaseCommand):
                 # Multiple chunks - send with chunked method
                 await self.send_response_chunked(message, chunks)
 
-            # TODO: US-009 - Add context pruning after response
+            # Prune old context to prevent unbounded DB growth
+            try:
+                await self.context_manager.prune_context(
+                    context_key=context_key,
+                    max_exchanges=self.context_max_exchanges,
+                    ttl_seconds=self.context_ttl_seconds,
+                )
+            except Exception as e:
+                # Log pruning errors but don't fail the command
+                self.logger.error(f"Context pruning error for key '{context_key}': {e}")
 
             return True
 
