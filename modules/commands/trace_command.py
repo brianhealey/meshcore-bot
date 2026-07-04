@@ -30,7 +30,7 @@ class TraceCommand(BaseCommand):
     parameters = [
         {
             "name": "path",
-            "description": "Optional comma-separated hex path to test (e.g., '01,7a,55'). If omitted, tests round-trip path to sender. Use this to test connectivity or signal quality.",
+            "description": "Comma-separated hex path to test (e.g., '01,7a,55'). IMPORTANT: Omit this parameter (don't pass it at all) to automatically test the sender's own connection path - this is the recommended way to check 'my connectivity' or 'my connection'.",
             "required": False,
             "type": "string"
         }

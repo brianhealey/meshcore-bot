@@ -321,6 +321,20 @@ class LLMCommand(BaseCommand):
             # Add user mention to response if configured
             response_with_mention = self._add_user_mention(llm_response, message)
 
+            # Hard truncate to maximum possible length before chunking
+            # Reserve space for chunk indicators like [N/M] (about 7 chars per chunk)
+            max_total_length = (self.max_chunk_length * self.max_response_parts) - (self.max_response_parts * 7)
+            if len(response_with_mention) > max_total_length:
+                # Truncate at sentence boundary if possible
+                truncated = response_with_mention[:max_total_length]
+                # Try to truncate at last sentence boundary
+                for delimiter in ['. ', '! ', '? ', '\n']:
+                    last_delim = truncated.rfind(delimiter)
+                    if last_delim > max_total_length * 0.7:  # Keep at least 70% of content
+                        truncated = truncated[:last_delim + 1]
+                        break
+                response_with_mention = truncated.rstrip()
+
             # Chunk the response for LoRa compatibility
             chunks = chunk_llm_response(
                 text=response_with_mention,

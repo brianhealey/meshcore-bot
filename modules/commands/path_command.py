@@ -34,8 +34,8 @@ class PathCommand(BaseCommand):
     parameters = [
         {
             "name": "destination",
-            "description": "Node ID, hex path, or destination to analyze routing for (e.g., '01,5f' for hex path, or node ID for route analysis). If user asks about 'route to X' or 'path to X', use the node ID.",
-            "required": True,
+            "description": "Node ID, hex path, or destination to analyze routing for (e.g., '01,5f' for hex path, or node ID for route analysis). IMPORTANT: Omit this parameter (don't pass it at all) to automatically analyze the sender's own message path - this is the recommended way to check 'my path', 'my route', or 'my connection'.",
+            "required": False,
             "type": "string"
         }
     ]
