@@ -185,3 +185,23 @@ Branch: ralph/llm-integration
   - Use pytest fixtures for shared setup (mock_logger, ollama_client)
 ---
 
+## 2026-07-04 - US-012
+- Implemented comprehensive unit tests for LLMContextManager
+- Files changed:
+  - tests/test_llm_context_manager.py (new file - 529 lines, 30 tests)
+  - scripts/ralph/prd.json (updated US-012 passes: true)
+- **Learnings for future iterations:**
+  - Test organization: 7 test classes (TestInit, TestGetContext, TestAddMessage, TestPruneContext, TestClearContext, TestFormatContextForOllama, TestErrorHandling)
+  - AsyncDBManager fixture requires DBManager initialization first to run migrations
+  - Pattern: Create DBManager to run migrations, then create AsyncDBManager pointing to same db_path
+  - Use `_ = DBManager(...)` with `# noqa: F841` comment to satisfy ruff (variable needed for side effect)
+  - Mock logger is shared across fixtures, so use assert_any_call() instead of assert_called_once() when migrations log info messages
+  - Testing async database operations: Use `async with async_db.connection()` pattern consistently
+  - Testing TTL-based pruning: Insert old timestamps directly using SQL to avoid time.sleep() delays
+  - Testing chronological order: Use time.sleep(0.01) to ensure timestamp ordering between messages
+  - Coverage of 100% achieved (55/55 statements) - exceeds 80% requirement
+  - All 2916 tests pass (2886 existing + 30 new = 2916 total)
+  - Test fixture pattern: mock_logger, async_db_manager (with migrations), context_manager (with db + logger)
+  - Error handling tests: Set manager.async_db = None to force errors and verify error logging
+---
+
