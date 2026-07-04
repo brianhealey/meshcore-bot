@@ -1425,6 +1425,64 @@ enabled = false
 # Allow private/internal feed URLs (default false for SSRF safety)
 allow_private_urls = false
 
+[LLM_Command]
+# Enable or disable the LLM (AI assistant) command (true/false)
+# Provides conversational AI capabilities via Ollama with automatic response chunking for LoRa mesh constraints
+enabled = false
+
+# Ollama API endpoint URL
+# Default: http://localhost:11434 (local Ollama instance)
+# For remote Ollama: http://hostname:11434
+ollama_endpoint = http://localhost:11434
+
+# Ollama model name
+# Examples: llama3.2:1b, llama3.2:3b, gemma2:2b, qwen2.5:3b
+# Choose smaller models for faster responses on resource-constrained systems
+# Default: llama3.2:1b
+ollama_model = llama3.2:1b
+
+# Ollama API timeout in seconds
+# How long to wait for Ollama to generate a response before giving up
+# Default: 30
+ollama_timeout_seconds = 30
+
+# Context management settings
+# Maximum number of conversation exchanges (user+bot pairs) to keep in context
+# Higher values = more context but slower responses and higher memory usage
+# Default: 3 (keeps last 3 exchanges = 6 messages)
+context_max_exchanges = 3
+
+# Context time-to-live in seconds
+# Conversation context older than this is automatically removed
+# Default: 86400 (24 hours)
+context_ttl_seconds = 86400
+
+# Response chunking settings
+# Maximum length per chunk in characters
+# LoRa mesh messages have ~200 character practical limit; default is 180 to leave room for chunk indicators
+# Default: 180
+max_chunk_length = 180
+
+# Maximum number of response chunks to send
+# Long responses are truncated if they would exceed this many chunks
+# Default: 5
+max_response_parts = 5
+
+# Delay in seconds between sending consecutive chunks
+# Prevents overwhelming the mesh network with rapid-fire messages
+# Default: 2.0
+chunk_delay_seconds = 2.0
+
+# System prompt for LLM behavior
+# This guides the AI's personality and response style
+# Keep responses concise and LoRa-friendly (short, clear, no markdown)
+system_prompt = You are a helpful assistant on a LoRa mesh network. Keep responses VERY concise and clear. No markdown, no formatting, no emojis. Maximum 2-3 short sentences per response. Be direct and informative.
+
+# Channels where LLM command is allowed (omit to use global monitor_channels)
+# channels =
+# aliases = comma-separated list of additional trigger words
+# aliases = ai, chat, llm
+
 ####################################################################################################
 #                                                                                                  #
 #                                       Web Viewer Configuration                                   #
