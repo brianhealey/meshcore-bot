@@ -12,6 +12,7 @@ from modules.utils import (
     calculate_packet_hash,
     calculate_path_distances,
     check_internet_connectivity,
+    chunk_llm_response,
     decode_escape_sequences,
     decode_path_len_byte,
     encode_path_len_byte,
@@ -876,4 +877,239 @@ class TestCalculatePacketHashEdgeCases:
         # Header 0x08 = TRANSPORT_FLOOD + TXT_MSG, 4 transport bytes, path_len=0, payload=0xFF
         h = calculate_packet_hash("0800000000" + "00" + "ff")
         assert h != "0000000000000000"
+
+
+class TestChunkLLMResponse:
+    """Tests for chunk_llm_response()."""
+
+    def test_empty_string_returns_single_empty_chunk(self):
+        """Empty string returns single chunk with no content."""
+        result = chunk_llm_response("")
+        assert result == [""]
+
+    def test_short_response_single_chunk_no_indicators(self):
+        """Short response under max_chunk_length returns single chunk without indicators."""
+        response = "This is a short response."
+        result = chunk_llm_response(response, max_chunk_length=180)
+        assert len(result) == 1
+        assert result[0] == "This is a short response."
+        assert "[1/1]" not in result[0]
+
+    def test_long_response_split_at_sentence_boundaries(self):
+        """Long response is split at sentence boundaries with chunk indicators."""
+        response = (
+            "This is the first sentence. "
+            "This is the second sentence. "
+            "This is the third sentence. "
+            "This is the fourth sentence."
+        )
+        result = chunk_llm_response(response, max_chunk_length=50)
+
+        # Should be split into multiple chunks
+        assert len(result) > 1
+
+        # Each chunk should have indicators
+        for i, chunk in enumerate(result, 1):
+            assert f"[{i}/{len(result)}]" in chunk
+
+        # Each chunk should be at or under max_chunk_length
+        for chunk in result:
+            assert len(chunk) <= 50
+
+    def test_split_at_period_exclamation_question_mark(self):
+        """Splitting respects different sentence terminators."""
+        response = "Question? Answer! Statement. Another one."
+        result = chunk_llm_response(response, max_chunk_length=25)
+
+        # Should split at sentence boundaries
+        assert len(result) > 1
+
+        # Verify chunk indicators are present
+        for i, chunk in enumerate(result, 1):
+            assert f"[{i}/{len(result)}]" in chunk
+
+    def test_no_sentence_boundaries_splits_at_word_boundaries(self):
+        """Response with no sentence boundaries falls back to word splitting."""
+        response = "word " * 50  # 250 chars, no sentence terminators
+        result = chunk_llm_response(response.strip(), max_chunk_length=50)
+
+        # Should be split into multiple chunks
+        assert len(result) > 1
+
+        # No chunk should split a word mid-word
+        for chunk in result:
+            # Remove chunk indicator to check content
+            content = chunk.split("] ", 1)[1] if "] " in chunk else chunk
+            # Should not start or end with partial words (spaces indicate word boundaries)
+            assert not content.startswith(" ")
+
+    def test_chunk_indicators_format(self):
+        """Chunk indicators follow [N/M] format."""
+        response = "Sentence one. " * 20
+        result = chunk_llm_response(response, max_chunk_length=50)
+
+        total_chunks = len(result)
+        for i, chunk in enumerate(result, 1):
+            expected_indicator = f"[{i}/{total_chunks}]"
+            assert chunk.startswith(expected_indicator)
+
+    def test_truncation_when_exceeds_max_parts(self):
+        """Response exceeding max_parts is truncated with suffix."""
+        response = "Sentence. " * 100  # Very long response
+        result = chunk_llm_response(response, max_chunk_length=50, max_parts=3)
+
+        # Should have exactly max_parts chunks
+        assert len(result) == 3
+
+        # Last chunk should contain truncation indicator (may be truncated itself)
+        assert "truncated" in result[-1] or "trun" in result[-1]
+
+    def test_truncation_suffix_format(self):
+        """Truncation suffix contains 'truncated' indicator."""
+        response = "A. " * 200
+        result = chunk_llm_response(response, max_chunk_length=30, max_parts=2)
+
+        assert len(result) == 2
+        # Truncation indicator present (may be shortened due to chunk length)
+        assert "truncated" in result[-1] or "trun" in result[-1]
+
+    def test_single_very_long_word(self):
+        """Very long word that exceeds max_chunk_length is handled."""
+        long_word = "a" * 200
+        result = chunk_llm_response(long_word, max_chunk_length=50)
+
+        # Should still chunk it
+        assert len(result) > 1
+
+        # Each chunk should have indicator
+        for i, chunk in enumerate(result, 1):
+            assert f"[{i}/{len(result)}]" in chunk
+
+    def test_chunk_indicator_space_accounted_for(self):
+        """Chunk indicators take up space and content fits within remaining space."""
+        # Create response that would be exactly 180 chars without indicators
+        response = "x" * 180
+        result = chunk_llm_response(response, max_chunk_length=180)
+
+        # Each chunk should be <= max_chunk_length including indicator
+        for chunk in result:
+            assert len(chunk) <= 180
+
+    def test_default_parameters(self):
+        """Test with default max_chunk_length=180 and max_parts=5."""
+        response = "This is a test. " * 100
+        result = chunk_llm_response(response)
+
+        # Should respect default max_parts=5
+        assert len(result) <= 5
+
+        # Each chunk should be <= 180
+        for chunk in result:
+            assert len(chunk) <= 180
+
+    def test_custom_max_chunk_length(self):
+        """Custom max_chunk_length is respected."""
+        response = "A. " * 50
+        result = chunk_llm_response(response, max_chunk_length=100)
+
+        for chunk in result:
+            assert len(chunk) <= 100
+
+    def test_custom_max_parts(self):
+        """Custom max_parts is respected."""
+        response = "Sentence. " * 200
+        result = chunk_llm_response(response, max_chunk_length=50, max_parts=10)
+
+        assert len(result) <= 10
+
+    def test_sentence_with_multiple_spaces(self):
+        """Sentences with multiple spaces between them are handled correctly."""
+        response = "First.  Second.   Third."
+        result = chunk_llm_response(response, max_chunk_length=20)
+
+        # Should still split correctly
+        assert len(result) >= 1
+
+    def test_preserves_sentence_punctuation(self):
+        """Sentence terminators are preserved in chunks."""
+        response = "Question? Answer! Statement."
+        result = chunk_llm_response(response, max_chunk_length=30)
+
+        # Reconstruct response (removing indicators)
+        reconstructed = ""
+        for chunk in result:
+            if "]" in chunk:
+                content = chunk.split("] ", 1)[1]
+            else:
+                content = chunk
+            reconstructed += content
+
+        # Original punctuation should be preserved
+        assert "?" in reconstructed
+        assert "!" in reconstructed
+        assert "." in reconstructed
+
+    def test_exactly_max_chunk_length_single_chunk(self):
+        """Response exactly at max_chunk_length returns single chunk."""
+        response = "x" * 180
+        result = chunk_llm_response(response, max_chunk_length=180)
+
+        # Should be single chunk (no indicator needed, so fits)
+        assert len(result) == 1
+
+    def test_one_char_over_max_creates_two_chunks(self):
+        """Response one char over max_chunk_length creates two chunks."""
+        response = "x" * 181
+        result = chunk_llm_response(response, max_chunk_length=180)
+
+        # Should be split into 2 chunks with indicators
+        assert len(result) == 2
+        assert "[1/2]" in result[0]
+        assert "[2/2]" in result[1]
+
+    def test_real_world_llm_response(self):
+        """Test with realistic LLM response format."""
+        response = (
+            "The weather today is sunny with a high of 75°F. "
+            "There's a slight breeze from the northwest at 5-10 mph. "
+            "Perfect conditions for outdoor activities! "
+            "Tomorrow we're expecting clouds to roll in with a 30% chance of rain. "
+            "Temperatures will drop slightly to around 70°F."
+        )
+        result = chunk_llm_response(response, max_chunk_length=100)
+
+        # Should create multiple chunks
+        assert len(result) > 1
+
+        # Each chunk should have indicators
+        for i, chunk in enumerate(result, 1):
+            assert f"[{i}/{len(result)}]" in chunk
+
+        # Chunks should respect length limit
+        for chunk in result:
+            assert len(chunk) <= 100
+
+    def test_response_with_only_periods(self):
+        """Response with only period separators works correctly."""
+        response = "One. Two. Three. Four. Five."
+        result = chunk_llm_response(response, max_chunk_length=15)
+
+        assert len(result) > 1
+        for chunk in result:
+            assert len(chunk) <= 15
+
+    def test_response_with_mixed_terminators(self):
+        """Response with mixed sentence terminators (. ! ?) splits correctly."""
+        response = "Statement. Question? Exclamation! Another statement."
+        result = chunk_llm_response(response, max_chunk_length=30)
+
+        assert len(result) > 1
+
+    def test_whitespace_only_response(self):
+        """Whitespace-only response is handled."""
+        response = "   "
+        result = chunk_llm_response(response)
+
+        # Should return single chunk
+        assert len(result) == 1
 
