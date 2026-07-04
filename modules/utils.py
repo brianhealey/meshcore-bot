@@ -2445,3 +2445,153 @@ def format_keyword_response_with_placeholders(
         if hasattr(bot, 'logger'):
             bot.logger.debug(f"Error formatting response with placeholders: {e}")
         return response_format
+
+
+def chunk_llm_response(
+    text: str,
+    max_chunk_length: int = 180,
+    max_parts: int = 5
+) -> list[str]:
+    """
+    Split long LLM responses into LoRa-compatible chunks.
+
+    Splits at sentence boundaries (. ! ?) when possible. Falls back to word
+    boundaries if sentences are too long. Adds chunk indicators [1/N] for
+    multi-part responses. Truncates with '...(truncated)' if exceeds max_parts.
+
+    Args:
+        text: The text to chunk.
+        max_chunk_length: Maximum length per chunk (default: 180).
+        max_parts: Maximum number of chunks before truncation (default: 5).
+
+    Returns:
+        List of chunk strings. Single-element list if text fits in one chunk.
+        Multi-element list with [N/M] indicators if split is needed.
+
+    Examples:
+        >>> chunk_llm_response("Short text")
+        ['Short text']
+
+        >>> chunk_llm_response("First sentence. Second sentence.", max_chunk_length=20)
+        ['[1/2] First sentence.', '[2/2] Second sentence.']
+
+        >>> chunk_llm_response("A" * 1000, max_parts=2, max_chunk_length=100)
+        ['[1/2] ' + 'A'*94, '[2/2] ' + 'A'*80 + '...(truncated)']
+    """
+    if not text or not text.strip():
+        return [""]
+
+    text = text.strip()
+
+    # If text fits in one chunk, return as-is
+    if len(text) <= max_chunk_length:
+        return [text]
+
+    # Split into sentences at . ! ? boundaries
+    sentence_pattern = re.compile(r'([.!?])\s+')
+    sentences = []
+    last_end = 0
+
+    for match in sentence_pattern.finditer(text):
+        sentence = text[last_end:match.end()].strip()
+        if sentence:
+            sentences.append(sentence)
+        last_end = match.end()
+
+    # Add any remaining text as final sentence
+    if last_end < len(text):
+        remaining = text[last_end:].strip()
+        if remaining:
+            sentences.append(remaining)
+
+    # If no sentence boundaries found, treat whole text as one sentence
+    if not sentences:
+        sentences = [text]
+
+    # Build chunks
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        # If sentence alone is too long, split by words
+        if len(sentence) > max_chunk_length:
+            # Flush current chunk if any
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+
+            # Split long sentence by words
+            words = sentence.split()
+            for word in words:
+                # If single word is too long, force split it
+                if len(word) > max_chunk_length:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                        current_chunk = ""
+                    # Split the long word itself
+                    for i in range(0, len(word), max_chunk_length):
+                        chunks.append(word[i:i + max_chunk_length])
+                    continue
+
+                # Try adding word to current chunk
+                test_chunk = current_chunk + (" " if current_chunk else "") + word
+                if len(test_chunk) > max_chunk_length:
+                    # Would exceed limit, flush current chunk
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = word
+                else:
+                    current_chunk = test_chunk
+
+            # Flush remaining chunk from word splitting
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+        else:
+            # Sentence fits in chunk length, try adding to current chunk
+            test_chunk = current_chunk + (" " if current_chunk else "") + sentence
+            if len(test_chunk) > max_chunk_length:
+                # Would exceed limit, flush current chunk and start new one
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence
+            else:
+                current_chunk = test_chunk
+
+    # Flush any remaining chunk
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    # If no chunks created (edge case), return original text
+    if not chunks:
+        return [text]
+
+    # Apply max_parts limit and truncation
+    if len(chunks) > max_parts:
+        chunks = chunks[:max_parts]
+        # Add truncation indicator to last chunk
+        truncation_suffix = "...(truncated)"
+        last_chunk = chunks[-1]
+        # Make room for truncation suffix
+        available_length = max_chunk_length - len(truncation_suffix)
+        if available_length > 0:
+            chunks[-1] = last_chunk[:available_length] + truncation_suffix
+        else:
+            chunks[-1] = truncation_suffix
+
+    # Add chunk indicators if multiple parts
+    if len(chunks) > 1:
+        total = len(chunks)
+
+        # Adjust chunks to fit with indicators
+        final_chunks = []
+        for i, chunk in enumerate(chunks, 1):
+            indicator = f"[{i}/{total}] "
+            # Ensure chunk + indicator doesn't exceed max_chunk_length
+            available_for_content = max_chunk_length - len(indicator)
+            if len(chunk) > available_for_content:
+                chunk = chunk[:available_for_content]
+            final_chunks.append(indicator + chunk)
+        return final_chunks
+
+    return chunks
