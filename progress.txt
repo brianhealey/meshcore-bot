@@ -175,3 +175,30 @@
 
 ---
 
+## 2026-07-04 - US-007
+- **What was implemented:**
+  - Created ToolExecutor class for executing LLM tool calls by routing through CommandManager
+  - Implemented execute_tool() method that creates synthetic MeshMessages from tool arguments
+  - Added timeout handling (default: 10 seconds, configurable)
+  - Validates tool_name against ToolRegistry whitelist before execution
+  - Captures command output from command.last_response or command_manager._last_response
+  - Handles errors gracefully and returns descriptive error messages to LLM
+  - Builds message content from tool arguments, respecting command parameter order
+  - Added 20 comprehensive tests covering all execution scenarios
+
+- **Files changed:**
+  - modules/tool_executor.py: New module with ToolExecutor class (170 lines)
+  - tests/test_tool_executor.py: New test file with 20 test cases
+
+- **Learnings for future iterations:**
+  - ToolExecutor creates synthetic MeshMessages that preserve original message context (sender, channel, etc.)
+  - Command output is captured via last_response attribute after execution
+  - AsyncMock objects need explicit attribute initialization (parameters = []) to avoid auto-mocking
+  - execute_tool() waits 0.1 seconds after command execution for send_response to complete
+  - Message content is built from arguments using command.parameters metadata for proper ordering
+  - Timeout errors and exceptions are caught and returned as strings for LLM to interpret
+  - Whitelist validation ensures only approved commands can be called by LLM
+  - All 3041 tests pass, typecheck passes, lint passes
+
+---
+
