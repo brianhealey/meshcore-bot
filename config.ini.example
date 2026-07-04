@@ -1492,10 +1492,26 @@ include_user_mention = true
 # Default: true
 track_all_commands = true
 
+# Enable tool calling / function calling
+# When true, the LLM can automatically invoke commands to answer questions
+# Example: User asks "What's the weather in Austin?" → LLM calls wx_command automatically
+# Requires Ollama model with function calling support (e.g., llama3.2:3b or newer)
+# Default: false
+enable_tools = false
+
+# Maximum number of tool calls per query
+# Limits how many commands the LLM can invoke per user question to prevent abuse
+# Default: 3
+max_tools_per_query = 3
+
+# Tool execution timeout in seconds
+# Maximum time to wait for a command to execute before returning an error to the LLM
+# Default: 10
+tool_timeout = 10
+
 # Available tools for LLM function calling
 # Comma-separated list of command names that the LLM can invoke via tool calling
 # When enable_tools is true, the LLM can automatically call these commands to answer questions
-# Example: User asks "What's the weather in Austin?" → LLM calls wx_command automatically
 # Default: wx,airplanes,satpass,path,stats,moon,sun,aurora
 # Supported tools: wx, airplanes, satpass, path, stats, moon, sun, aurora
 available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora

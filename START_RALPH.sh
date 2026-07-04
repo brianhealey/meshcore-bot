@@ -4,15 +4,20 @@
 set -e
 
 echo "================================================"
-echo "  Ralph - MeshCore Bot LLM Integration"
+echo "  Ralph - MeshCore Bot LLM Tools Integration"
 echo "================================================"
 echo ""
 echo "This will:"
-echo "  1. Create branch: ralph/llm-integration"
+echo "  1. Create branch: ralph/llm-tools-integration"
 echo "  2. Run Ralph for 25 iterations"
 echo "  3. Implement 15 user stories autonomously"
 echo ""
-echo "Estimated time: 2-4 hours"
+echo "Features to be implemented:"
+echo "  - LLM tool calling (commands as tools)"
+echo "  - User mentions in responses"
+echo "  - Universal command context tracking"
+echo ""
+echo "Estimated time: 3-5 hours"
 echo ""
 read -p "Continue? (y/n) " -n 1 -r
 echo ""
@@ -30,16 +35,19 @@ CURRENT_BRANCH=$(git branch --show-current)
 echo "Current branch: $CURRENT_BRANCH"
 
 # Create feature branch
-echo "Creating branch: ralph/llm-integration"
-git checkout -b ralph/llm-integration 2>/dev/null || git checkout ralph/llm-integration
+echo "Creating branch: ralph/llm-tools-integration"
+git checkout -b ralph/llm-tools-integration 2>/dev/null || git checkout ralph/llm-tools-integration
 
 # Show the plan
 echo ""
 echo "Ralph will implement these 15 stories:"
-jq -r '.userStories[] | "\(.id): \(.title)"' scripts/ralph/prd.json
+jq -r '.userStories[] | "\(.id): \(.title)"' prd.json
 echo ""
 
 # Start Ralph
 echo "Starting Ralph..."
+echo ""
+echo "Note: Ralph expects prd.json in the repo root"
+echo "      progress.txt will be created to track execution"
 echo ""
 ./scripts/ralph/ralph.sh --tool claude 25

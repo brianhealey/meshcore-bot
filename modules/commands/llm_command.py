@@ -4,11 +4,13 @@ LLM command for the MeshCore Bot
 Provides conversational AI capabilities via Ollama with LoRa-optimized response chunking
 """
 
-from typing import Optional
+from typing import Optional, Any
 
 from ..llm_context_manager import LLMContextManager
 from ..models import MeshMessage
 from ..ollama_client import OllamaClient
+from ..tool_executor import ToolExecutor
+from ..tool_registry import ToolRegistry
 from ..utils import chunk_llm_response
 from .base_command import BaseCommand
 
@@ -125,6 +127,20 @@ class LLMCommand(BaseCommand):
             fallback=True, value_type='bool'
         )
 
+        # Load tool calling settings
+        self.enable_tools = self.get_config_value(
+            'LLM_Command', 'enable_tools',
+            fallback=False, value_type='bool'
+        )
+        self.max_tools_per_query = self.get_config_value(
+            'LLM_Command', 'max_tools_per_query',
+            fallback=3, value_type='int'
+        )
+        self.tool_timeout = self.get_config_value(
+            'LLM_Command', 'tool_timeout',
+            fallback=10, value_type='int'
+        )
+
         # Initialize OllamaClient
         self.ollama_client = OllamaClient(
             endpoint=self.ollama_endpoint,
@@ -138,6 +154,21 @@ class LLMCommand(BaseCommand):
             async_db=bot.async_db_manager,
             logger=self.logger,
         )
+
+        # Initialize ToolRegistry and ToolExecutor for function calling
+        if self.enable_tools:
+            self.tool_registry: ToolRegistry | None = ToolRegistry(
+                bot=bot,
+                command_manager=bot.command_manager,
+            )
+            self.tool_executor: ToolExecutor | None = ToolExecutor(
+                bot=bot,
+                command_manager=bot.command_manager,
+                tool_registry=self.tool_registry,
+            )
+        else:
+            self.tool_registry = None
+            self.tool_executor = None
 
     async def cleanup(self) -> None:
         """Clean up resources (close HTTP session).
@@ -237,13 +268,16 @@ class LLMCommand(BaseCommand):
             # Convert context to Ollama format
             context = LLMContextManager.format_context_for_ollama(context_records)
 
-            # Query Ollama
+            # Query Ollama (with or without tool calling)
             try:
-                llm_response = await self.ollama_client.generate(
-                    prompt=question,
-                    context=context,
-                    system_prompt=self.system_prompt,
-                )
+                if self.enable_tools:
+                    llm_response = await self._execute_with_tools(question, context, message)
+                else:
+                    llm_response = await self.ollama_client.generate(
+                        prompt=question,
+                        context=context,
+                        system_prompt=self.system_prompt,
+                    )
             except Exception as e:
                 self.logger.error(f"Ollama generation error: {e}")
                 error_msg = self._add_user_mention(
@@ -303,6 +337,145 @@ class LLMCommand(BaseCommand):
             )
             await self.send_response(message, error_msg)
             return False
+
+    async def _execute_with_tools(
+        self,
+        question: str,
+        context: list[dict[str, str]],
+        message: MeshMessage,
+    ) -> str:
+        """Execute LLM query with tool calling support.
+
+        Implements the tool-calling loop:
+        1. Call LLM with available tools
+        2. If LLM returns tool calls, execute them
+        3. Add tool results to messages and repeat
+        4. Continue until LLM returns final response or max iterations reached
+
+        Args:
+            question: The user's question
+            context: Previous conversation context in Ollama format
+            message: The original MeshMessage (for channel/sender info)
+
+        Returns:
+            Final LLM response text
+
+        Raises:
+            Exception: If tool calling fails or LLM errors
+        """
+        if not self.tool_registry or not self.tool_executor:
+            # Fallback to non-tool mode if tools not initialized
+            return await self.ollama_client.generate(
+                prompt=question,
+                context=context,
+                system_prompt=self.system_prompt,
+            )
+
+        # Get available tool schemas
+        tool_schemas = self.tool_registry.get_all_tool_schemas()
+
+        # Build messages list for chat API
+        messages: list[dict[str, Any]] = []
+
+        # Add system prompt
+        messages.append({
+            "role": "system",
+            "content": self.system_prompt,
+        })
+
+        # Add conversation context
+        messages.extend(context)
+
+        # Add current user question
+        messages.append({
+            "role": "user",
+            "content": question,
+        })
+
+        # Tool calling loop
+        tool_calls_count = 0
+        max_iterations = self.max_tools_per_query
+
+        for iteration in range(max_iterations + 1):
+            self.logger.debug(f"Tool calling iteration {iteration + 1}/{max_iterations + 1}")
+
+            # Call LLM with tools
+            response = await self.ollama_client.chat(
+                messages=messages,
+                tools=tool_schemas if iteration < max_iterations else None,
+            )
+
+            # Extract message from response
+            response_message = response.get("message", {})
+
+            # Check for tool calls
+            tool_calls = response_message.get("tool_calls", [])
+
+            if not tool_calls:
+                # No tool calls - return final response
+                final_response = response_message.get("content", "")
+                self.logger.debug(f"LLM returned final response (no tool calls): {final_response[:100]}")
+                return final_response
+
+            # Execute tool calls
+            self.logger.info(f"LLM requested {len(tool_calls)} tool call(s)")
+
+            # Add assistant message with tool calls to conversation
+            messages.append(response_message)
+
+            # Execute each tool call and collect results
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("function", {}).get("name", "")
+                tool_args = tool_call.get("function", {}).get("arguments", {})
+
+                self.logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+
+                try:
+                    # Execute the tool
+                    tool_result = await self.tool_executor.execute_tool(
+                        tool_name=tool_name,
+                        arguments=tool_args,
+                        original_message=message,
+                        timeout=self.tool_timeout,
+                    )
+
+                    self.logger.debug(f"Tool {tool_name} result: {tool_result[:200]}")
+
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "content": tool_result,
+                    })
+
+                    tool_calls_count += 1
+
+                except Exception as e:
+                    error_msg = f"Error executing tool {tool_name}: {e}"
+                    self.logger.error(error_msg)
+
+                    # Add error as tool result
+                    messages.append({
+                        "role": "tool",
+                        "content": f"Error: {error_msg}",
+                    })
+
+            # Check if we've hit the max tool calls limit
+            if tool_calls_count >= self.max_tools_per_query:
+                self.logger.warning(
+                    f"Reached max tool calls limit ({self.max_tools_per_query}). "
+                    "Forcing final response from LLM."
+                )
+                break
+
+        # If we exit the loop without a final response, make one last call without tools
+        self.logger.debug("Making final LLM call without tools")
+        final_response_obj = await self.ollama_client.chat(
+            messages=messages,
+            tools=None,  # No tools for final call
+        )
+
+        final_text = final_response_obj.get("message", {}).get("content", "")
+        return final_text
 
     def _extract_question(self, content: str) -> Optional[str]:
         """Extract the question from the message content.

@@ -2071,6 +2071,16 @@ long_jokes = false
                 except Exception as e:
                     self.logger.error(f"Failed to stop service '{service_name}': {e}")
 
+            # Cleanup commands that have cleanup methods
+            if hasattr(self, 'command_manager') and self.command_manager:
+                for cmd_name, cmd_instance in self.command_manager.commands.items():
+                    if hasattr(cmd_instance, 'cleanup'):
+                        try:
+                            await cmd_instance.cleanup()
+                            self.logger.debug(f"Command '{cmd_name}' cleaned up")
+                        except Exception as e:
+                            self.logger.error(f"Failed to cleanup command '{cmd_name}': {e}")
+
             # Stop web viewer with proper shutdown sequence
             if self.web_viewer_integration:
                 # Web viewer has simpler shutdown

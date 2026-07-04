@@ -574,3 +574,341 @@ class TestLLMCommandUserMention:
         response_text = call_args[0][1]
         assert response_text.startswith("[@TestUser]")
         assert "context cleared" in response_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestLLMCommandToolCalling
+# ---------------------------------------------------------------------------
+
+
+class TestLLMCommandToolCalling:
+    """Test LLMCommand tool calling integration."""
+
+    async def test_tool_calling_disabled_by_default(self, command_mock_bot_with_llm):
+        """Test that tool calling is disabled by default."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        assert cmd.enable_tools is False
+        assert cmd.tool_registry is None
+        assert cmd.tool_executor is None
+
+    async def test_tool_calling_enabled_initializes_components(self, command_mock_bot_with_llm):
+        """Test that enabling tool calling initializes ToolRegistry and ToolExecutor."""
+        # Update mock config to enable tools
+        original_get = command_mock_bot_with_llm.config.get
+
+        def get_with_tools(section, option, fallback=None):
+            if section == 'LLM_Command' and option == 'enable_tools':
+                return 'true'
+            return original_get(section, option, fallback)
+
+        command_mock_bot_with_llm.config.get = Mock(side_effect=get_with_tools)
+        command_mock_bot_with_llm.config.getboolean = Mock(
+            side_effect=lambda s, o, fallback=False: get_with_tools(s, o, fallback) == 'true'
+        )
+
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        assert cmd.enable_tools is True
+        assert cmd.tool_registry is not None
+        assert cmd.tool_executor is not None
+
+    async def test_tool_calling_loads_config_values(self, command_mock_bot_with_llm):
+        """Test that tool calling config values are loaded correctly."""
+        # Update mock config
+        original_get = command_mock_bot_with_llm.config.get
+
+        def get_with_tools(section, option, fallback=None):
+            if section == 'LLM_Command':
+                tool_config = {
+                    'enable_tools': 'true',
+                    'max_tools_per_query': '5',
+                    'tool_timeout': '15',
+                }
+                if option in tool_config:
+                    return tool_config[option]
+            return original_get(section, option, fallback)
+
+        command_mock_bot_with_llm.config.get = Mock(side_effect=get_with_tools)
+        command_mock_bot_with_llm.config.getboolean = Mock(
+            side_effect=lambda s, o, fallback=False: get_with_tools(s, o, fallback) == 'true'
+        )
+        command_mock_bot_with_llm.config.getint = Mock(
+            side_effect=lambda s, o, fallback=0: int(get_with_tools(s, o, fallback))
+        )
+
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        assert cmd.enable_tools is True
+        assert cmd.max_tools_per_query == 5
+        assert cmd.tool_timeout == 15
+
+    async def test_execute_with_tools_disabled_uses_generate(self, command_mock_bot_with_llm):
+        """Test that execute uses generate() when tools are disabled."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = False
+
+        with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+            with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+                mock_generate.return_value = "Answer without tools"
+
+                msg = mock_message(content="!ask What is 2+2?", channel="test")
+                await cmd.execute(msg)
+
+                # Verify generate was called, not chat
+                assert mock_generate.call_count == 1
+                assert mock_chat.call_count == 0
+
+    async def test_execute_with_tools_enabled_uses_chat(self, command_mock_bot_with_llm):
+        """Test that execute uses chat() when tools are enabled."""
+        # Enable tools
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
+        cmd.tool_executor = Mock()
+
+        with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+            with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+                # Mock chat response with no tool calls
+                mock_chat.return_value = {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Answer with tools enabled",
+                    },
+                    "done": True,
+                }
+
+                msg = mock_message(content="!ask What is 2+2?", channel="test")
+                await cmd.execute(msg)
+
+                # Verify chat was called, not generate
+                assert mock_chat.call_count == 1
+                assert mock_generate.call_count == 0
+
+    async def test_tool_calling_single_tool_execution(self, command_mock_bot_with_llm):
+        """Test LLM calls single tool and returns final response."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "wx",
+                    "description": "Get weather",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ])
+        cmd.tool_executor = Mock()
+        cmd.tool_executor.execute_tool = AsyncMock(return_value="Austin: 72°F, Sunny")
+
+        with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+            # First call: LLM requests tool call
+            # Second call: LLM returns final response
+            mock_chat.side_effect = [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "wx",
+                                    "arguments": {"location": "Austin"},
+                                }
+                            }
+                        ],
+                    },
+                    "done": True,
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "The weather in Austin is 72°F and sunny.",
+                    },
+                    "done": True,
+                },
+            ]
+
+            msg = mock_message(content="!ask What's the weather in Austin?", channel="test")
+            await cmd.execute(msg)
+
+            # Verify tool was executed
+            assert cmd.tool_executor.execute_tool.call_count == 1
+            call_args = cmd.tool_executor.execute_tool.call_args
+            assert call_args[1]['tool_name'] == 'wx'
+            assert call_args[1]['arguments'] == {'location': 'Austin'}
+
+            # Verify final response was sent
+            assert command_mock_bot_with_llm.command_manager.send_response.call_count == 1
+            response_text = command_mock_bot_with_llm.command_manager.send_response.call_args[0][1]
+            assert "72°F and sunny" in response_text
+
+    async def test_tool_calling_multiple_tools(self, command_mock_bot_with_llm):
+        """Test LLM calls multiple tools in sequence."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.max_tools_per_query = 5
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
+        cmd.tool_executor = Mock()
+        cmd.tool_executor.execute_tool = AsyncMock(side_effect=[
+            "Austin: 72°F, Sunny",
+            "ISS passes at 10:30 PM",
+        ])
+
+        with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = [
+                # First call: LLM requests wx tool
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"function": {"name": "wx", "arguments": {"location": "Austin"}}}
+                        ],
+                    },
+                    "done": True,
+                },
+                # Second call: LLM requests satpass tool
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"function": {"name": "satpass", "arguments": {}}}
+                        ],
+                    },
+                    "done": True,
+                },
+                # Third call: LLM returns final response
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Weather is 72°F. ISS passes at 10:30 PM.",
+                    },
+                    "done": True,
+                },
+            ]
+
+            msg = mock_message(content="!ask Weather and ISS pass?", channel="test")
+            await cmd.execute(msg)
+
+            # Verify both tools were executed
+            assert cmd.tool_executor.execute_tool.call_count == 2
+
+    async def test_tool_calling_max_iterations_limit(self, command_mock_bot_with_llm):
+        """Test that tool calling respects max_tools_per_query limit."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.max_tools_per_query = 2  # Limit to 2 tools
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
+        cmd.tool_executor = Mock()
+        cmd.tool_executor.execute_tool = AsyncMock(return_value="Tool result")
+
+        with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+            # LLM keeps requesting tools
+            mock_chat.side_effect = [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"function": {"name": "wx", "arguments": {}}}],
+                    },
+                    "done": True,
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"function": {"name": "satpass", "arguments": {}}}],
+                    },
+                    "done": True,
+                },
+                # Should not reach this call - limit hit
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"function": {"name": "airplanes", "arguments": {}}}],
+                    },
+                    "done": True,
+                },
+                # Final call without tools
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Final response after hitting limit",
+                    },
+                    "done": True,
+                },
+            ]
+
+            msg = mock_message(content="!ask Test max tools", channel="test")
+            await cmd.execute(msg)
+
+            # Verify only 2 tools were executed (limit)
+            assert cmd.tool_executor.execute_tool.call_count == 2
+
+    async def test_tool_calling_error_handling(self, command_mock_bot_with_llm):
+        """Test that tool execution errors are handled gracefully."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
+        cmd.tool_executor = Mock()
+        cmd.tool_executor.execute_tool = AsyncMock(side_effect=Exception("Tool error"))
+
+        with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = [
+                # LLM requests tool
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"function": {"name": "wx", "arguments": {}}}],
+                    },
+                    "done": True,
+                },
+                # LLM handles error and returns final response
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Sorry, I couldn't get the weather.",
+                    },
+                    "done": True,
+                },
+            ]
+
+            msg = mock_message(content="!ask Weather?", channel="test")
+            result = await cmd.execute(msg)
+
+            # Execute should still succeed despite tool error
+            assert result is True
+            assert cmd.tool_executor.execute_tool.call_count == 1
+
+    async def test_tool_calling_no_tools_returns_immediately(self, command_mock_bot_with_llm):
+        """Test that LLM response without tool calls returns immediately."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.enable_tools = True
+        cmd.tool_registry = Mock()
+        cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
+        cmd.tool_executor = Mock()
+
+        with patch.object(cmd.ollama_client, 'chat', new_callable=AsyncMock) as mock_chat:
+            # LLM responds directly without tool calls
+            mock_chat.return_value = {
+                "message": {
+                    "role": "assistant",
+                    "content": "Direct answer without tools",
+                },
+                "done": True,
+            }
+
+            msg = mock_message(content="!ask Simple question?", channel="test")
+            await cmd.execute(msg)
+
+            # Verify only one chat call was made
+            assert mock_chat.call_count == 1
+            # Verify no tools were executed
+            assert not hasattr(cmd.tool_executor, 'execute_tool') or cmd.tool_executor.execute_tool.call_count == 0
