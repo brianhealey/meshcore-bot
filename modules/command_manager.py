@@ -1543,6 +1543,12 @@ class CommandManager:
             else:
                 self._last_response = content
 
+            # If this is a tool execution, only capture the response but don't send it
+            # The LLM will use this output to synthesize a final response
+            if hasattr(message, 'is_tool_execution') and message.is_tool_execution:
+                self.logger.debug(f"Tool execution: captured response but not sending (len={len(content)})")
+                return True  # Return success without actually sending
+
             rate_limit_key = self.get_rate_limit_key(message)
             if message.is_dm:
                 return await self.send_dm(

@@ -28,13 +28,13 @@ class PathCommand(BaseCommand):
     category = "meshcore_info"
 
     # Documentation
-    short_description = "Decode path data to show repeaters involved in message routing"
+    short_description = "Analyze mesh network routing paths and repeaters. Use for questions about routes, hops, repeaters between nodes, or how messages are routed through the mesh."
     usage = "path [hex_data]"
     examples = ["path", "decode"]
     parameters = [
         {
             "name": "destination",
-            "description": "Node ID or hex path data to analyze (e.g., '01,5f' or destination node ID)",
+            "description": "Node ID, hex path, or destination to analyze routing for (e.g., '01,5f' for hex path, or node ID for route analysis). If user asks about 'route to X' or 'path to X', use the node ID.",
             "required": True,
             "type": "string"
         }

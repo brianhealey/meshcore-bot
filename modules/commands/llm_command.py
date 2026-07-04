@@ -155,20 +155,36 @@ class LLMCommand(BaseCommand):
             logger=self.logger,
         )
 
-        # Initialize ToolRegistry and ToolExecutor for function calling
-        if self.enable_tools:
-            self.tool_registry: ToolRegistry | None = ToolRegistry(
-                bot=bot,
-                command_manager=bot.command_manager,
+        # Initialize ToolRegistry and ToolExecutor lazily (on first use)
+        # to avoid accessing bot.command_manager before it's fully initialized
+        self.tool_registry: ToolRegistry | None = None
+        self.tool_executor: ToolExecutor | None = None
+        self._tools_initialized = False
+
+    def _initialize_tools(self) -> None:
+        """Initialize ToolRegistry and ToolExecutor lazily.
+
+        This is called on first use to avoid accessing bot.command_manager
+        before it's fully initialized during bot startup.
+        """
+        if self._tools_initialized or not self.enable_tools:
+            return
+
+        try:
+            self.tool_registry = ToolRegistry(
+                bot=self.bot,
+                command_manager=self.bot.command_manager,
             )
-            self.tool_executor: ToolExecutor | None = ToolExecutor(
-                bot=bot,
-                command_manager=bot.command_manager,
+            self.tool_executor = ToolExecutor(
+                bot=self.bot,
+                command_manager=self.bot.command_manager,
                 tool_registry=self.tool_registry,
             )
-        else:
-            self.tool_registry = None
-            self.tool_executor = None
+            self._tools_initialized = True
+            self.logger.info("Tool calling initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize tool calling: {e}")
+            self.enable_tools = False
 
     async def cleanup(self) -> None:
         """Clean up resources (close HTTP session).
@@ -223,6 +239,9 @@ class LLMCommand(BaseCommand):
         Returns:
             bool: True if execution was successful, False otherwise.
         """
+        # Initialize tools lazily on first use (if enabled)
+        self._initialize_tools()
+
         # Build context key from message (channel name or user identifier)
         context_key = self._build_context_key(message)
 

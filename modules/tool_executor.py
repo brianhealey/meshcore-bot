@@ -85,6 +85,9 @@ class ToolExecutor:
             content_lower=message_content.lower()
         )
 
+        # Mark this message as a tool execution to suppress sending
+        synthetic_message.is_tool_execution = True
+
         # Execute command with timeout
         try:
             self.logger.info(f"Executing tool '{tool_name}' with arguments: {arguments}")

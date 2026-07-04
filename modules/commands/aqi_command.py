@@ -40,11 +40,16 @@ class AqiCommand(BaseCommand):
     requires_internet = True  # Requires internet access for OpenMeteo API and geocoding
 
     # Documentation
-    short_description = "Get Air Quality Index for a location"
+    short_description = "Get Air Quality Index (AQI) and pollutant levels for a location. Use this for air quality, pollution, smog, or AQI queries, NOT for weather."
     usage = "aqi <city|neighborhood|coordinates|help>"
     examples = ["aqi seattle", "aqi 47.6,-122.3"]
     parameters = [
-        {"name": "location", "description": "City, neighborhood, lat/lon, or 'help'"}
+        {
+            "name": "location",
+            "description": "City name, neighborhood, lat/lon coordinates, or 'help' for pollutant info",
+            "required": True,
+            "type": "string"
+        }
     ]
 
     # Error constants

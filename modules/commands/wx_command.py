@@ -62,7 +62,7 @@ class WxCommand(BaseCommand):
     requires_internet = False
 
     # Documentation
-    short_description = "Get weather for a US location using NOAA weather data"
+    short_description = "Get weather forecast and conditions (temperature, precipitation, wind) for US locations using NOAA. NOT for air quality - use aqi tool instead."
     usage = "wx <zipcode|city> [tomorrow|<N>d|hourly|alerts]"
     examples = ["wx 98101", "wx seattle", "wx 90210 7d"]
     parameters = [

@@ -25,11 +25,17 @@ class StatsCommand(BaseCommand):
     category = "analytics"
 
     # Documentation
-    short_description = "Show bot usage statistics for past 24 hours"
+    short_description = "Show mesh network activity and bot usage statistics for past 24 hours. Use for questions about network activity, message volume, active nodes, channel usage, or routing patterns."
     usage = "stats [messages|channels|paths|adverts]"
     examples = ["stats", "stats channels"]
     parameters = [
-        {"name": "type", "description": "messages, channels, or paths (optional)"}
+        {
+            "name": "type",
+            "description": "Type of stats to show: 'messages' for message activity, 'channels' for channel usage, 'paths' for routing patterns, 'adverts' for node advertisements. Omit for summary.",
+            "required": False,
+            "type": "string",
+            "enum": ["messages", "channels", "paths", "adverts"]
+        }
     ]
 
     def __init__(self, bot: Any):

@@ -24,9 +24,17 @@ class TraceCommand(BaseCommand):
     cooldown_seconds = 2
     category = "meshcore_info"
 
-    short_description = "Run link trace (manual or reciprocal path)"
+    short_description = "Test mesh network connectivity and measure signal quality (SNR/RSSI) along a route. Use for link diagnostics, connection testing, or measuring signal strength between nodes."
     usage = "trace [path]  or  tracer [path]"
     examples = ["trace 01,7a,55", "trace feed,6ddf,feed", "tracer", "tracer 01,7a,55"]
+    parameters = [
+        {
+            "name": "path",
+            "description": "Optional comma-separated hex path to test (e.g., '01,7a,55'). If omitted, tests round-trip path to sender. Use this to test connectivity or signal quality.",
+            "required": False,
+            "type": "string"
+        }
+    ]
 
     def __init__(self, bot):
         super().__init__(bot)
