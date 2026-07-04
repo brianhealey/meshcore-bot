@@ -430,3 +430,106 @@ class TestWxCommandToolExecution:
         )
 
         assert "98101" in result or "Seattle" in result
+
+
+class TestAirplanesCommandToolExecution:
+    """Tests for airplanes_command tool execution (US-010)."""
+
+    async def test_airplanes_command_no_parameters(self, tool_executor, sample_message, mock_command_manager):
+        """Test airplanes command execution with no parameters (uses default radius)."""
+        async def set_airplanes_response(msg):
+            # Default radius should be used
+            mock_airplanes.last_response = "QXE2307 (E75L) Horizon Air 7.5nm NW: 21,675ft @ 366kt, 354°"
+            return True
+
+        mock_airplanes = AsyncMock()
+        mock_airplanes.execute = set_airplanes_response
+        mock_airplanes.last_response = None
+        mock_airplanes.parameters = [
+            {"name": "radius", "description": "Search radius in nautical miles", "required": False, "type": "number"}
+        ]
+        mock_command_manager.commands = {'airplanes': mock_airplanes}
+
+        result = await tool_executor.execute_tool(
+            'airplanes',
+            {},
+            sample_message
+        )
+
+        assert "QXE2307" in result or "Horizon" in result
+
+    async def test_airplanes_command_with_radius(self, tool_executor, sample_message, mock_command_manager):
+        """Test airplanes command execution with custom radius parameter."""
+        async def set_airplanes_response(msg):
+            # Verify radius is in message content
+            assert 'radius=50' in msg.content.lower() or '50' in msg.content
+            mock_airplanes.last_response = "DAL123 (B738) Delta 15.2nm SE: 12,000ft @ 280kt, 180°"
+            return True
+
+        mock_airplanes = AsyncMock()
+        mock_airplanes.execute = set_airplanes_response
+        mock_airplanes.last_response = None
+        mock_airplanes.parameters = [
+            {"name": "radius", "description": "Search radius in nautical miles", "required": False, "type": "number"}
+        ]
+        mock_command_manager.commands = {'airplanes': mock_airplanes}
+
+        result = await tool_executor.execute_tool(
+            'airplanes',
+            {'radius': 50},
+            sample_message
+        )
+
+        assert "DAL123" in result or "Delta" in result
+
+    async def test_airplanes_command_with_small_radius(self, tool_executor, sample_message, mock_command_manager):
+        """Test airplanes command execution with small radius value."""
+        async def set_airplanes_response(msg):
+            assert 'radius=5' in msg.content.lower() or '5' in msg.content
+            mock_airplanes.last_response = "No aircraft found within 5nm"
+            return True
+
+        mock_airplanes = AsyncMock()
+        mock_airplanes.execute = set_airplanes_response
+        mock_airplanes.last_response = None
+        mock_airplanes.parameters = [
+            {"name": "radius", "description": "Search radius in nautical miles", "required": False, "type": "number"}
+        ]
+        mock_command_manager.commands = {'airplanes': mock_airplanes}
+
+        result = await tool_executor.execute_tool(
+            'airplanes',
+            {'radius': 5},
+            sample_message
+        )
+
+        assert "No aircraft" in result or "5" in result
+
+    async def test_airplanes_command_multiple_aircraft_response(self, tool_executor, sample_message, mock_command_manager):
+        """Test airplanes command execution that returns multiple aircraft."""
+        async def set_airplanes_response(msg):
+            mock_airplanes.last_response = (
+                "QXE2307 21,675ft 366kt 7.5nm NW\n"
+                "DAL123 12,000ft 280kt 15.2nm SE\n"
+                "UAL456 35,000ft 450kt 22.1nm N"
+            )
+            return True
+
+        mock_airplanes = AsyncMock()
+        mock_airplanes.execute = set_airplanes_response
+        mock_airplanes.last_response = None
+        mock_airplanes.parameters = [
+            {"name": "radius", "description": "Search radius in nautical miles", "required": False, "type": "number"}
+        ]
+        mock_command_manager.commands = {'airplanes': mock_airplanes}
+
+        result = await tool_executor.execute_tool(
+            'airplanes',
+            {},
+            sample_message
+        )
+
+        # Should contain multiple aircraft callsigns
+        assert "QXE2307" in result
+        assert "DAL123" in result
+        assert "UAL456" in result

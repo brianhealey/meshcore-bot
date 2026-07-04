@@ -36,9 +36,12 @@ class AirplanesCommand(BaseCommand):
     usage = "airplanes [lat,lon|here] [radius=N] [options]"
     examples = ["airplanes", "overhead 47.6,-122.3"]
     parameters = [
-        {"name": "location", "description": "Coordinates or here for your companion's location if advertised"},
-        {"name": "radius", "description": "Search radius in nautical miles (default: 25)"},
-        {"name": "filters", "description": "alt=, type=, military, closest, etc."}
+        {
+            "name": "radius",
+            "description": "Search radius in nautical miles (default: 25)",
+            "required": False,
+            "type": "number"
+        }
     ]
 
     def __init__(self, bot):

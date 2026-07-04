@@ -149,6 +149,7 @@ module = [
     "modules.scheduler",
     "modules.maintenance",
     "modules.transmission_tracker",
+    "modules.commands.airplanes_command",
     "modules.commands.alert_command",
     "modules.commands.announcements_command",
     "modules.commands.aurora_command",

@@ -310,3 +310,64 @@ class TestWxCommandToolSchema:
         assert "forecast_type" not in params["required"]
         assert params["properties"]["forecast_type"]["type"] == "string"
         assert params["properties"]["forecast_type"]["enum"] == ["current", "tomorrow", "7d", "hourly", "alerts"]
+
+
+class TestAirplanesCommandToolSchema:
+    """Tests for airplanes_command tool schema generation (US-010)."""
+
+    def test_airplanes_command_has_radius_parameter_optional(self):
+        """Test that airplanes command has radius as optional parameter."""
+        from modules.commands.airplanes_command import AirplanesCommand
+
+        params = AirplanesCommand.parameters
+        radius_param = next((p for p in params if p["name"] == "radius"), None)
+
+        assert radius_param is not None
+        assert radius_param["required"] is False
+        assert radius_param["type"] == "number"
+        assert "radius" in radius_param["description"].lower()
+
+    def test_airplanes_command_description(self):
+        """Test that airplanes command has correct description."""
+        from modules.commands.airplanes_command import AirplanesCommand
+
+        assert AirplanesCommand.short_description == "Get aircraft overhead using ADS-B data"
+
+    def test_airplanes_command_generates_valid_tool_schema(self, tool_registry, mock_bot, mock_command_manager):
+        """Test that ToolRegistry generates valid schema for airplanes_command."""
+        # Create a real-like airplanes command with updated parameters
+        airplanes_cmd = MagicMock()
+        airplanes_cmd.name = "airplanes"
+        airplanes_cmd.short_description = "Get information about nearby aircraft using ADS-B data"
+        airplanes_cmd.parameters = [
+            {
+                "name": "radius",
+                "description": "Search radius in nautical miles (default: 25)",
+                "required": False,
+                "type": "number"
+            }
+        ]
+
+        schema = tool_registry.generate_tool_schema(airplanes_cmd)
+
+        # Verify schema structure
+        assert schema["type"] == "function"
+        assert schema["function"]["name"] == "airplanes"
+        assert schema["function"]["description"] == "Get information about nearby aircraft using ADS-B data"
+
+        # Verify parameters
+        params = schema["function"]["parameters"]
+        assert "radius" in params["properties"]
+
+        # Verify radius is optional
+        assert "radius" not in params["required"]
+        assert params["properties"]["radius"]["type"] == "number"
+
+    def test_airplanes_command_schema_in_available_tools(self, tool_registry):
+        """Test that airplanes appears in get_all_tool_schemas when available."""
+        schemas = tool_registry.get_all_tool_schemas()
+
+        # Find airplanes schema
+        airplanes_schema = next((s for s in schemas if s["function"]["name"] == "airplanes"), None)
+        assert airplanes_schema is not None
+        assert airplanes_schema["function"]["description"] == "Get information about nearby aircraft using ADS-B data"
