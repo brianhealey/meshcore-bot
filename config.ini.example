@@ -1492,6 +1492,14 @@ include_user_mention = true
 # Default: true
 track_all_commands = true
 
+# Available tools for LLM function calling
+# Comma-separated list of command names that the LLM can invoke via tool calling
+# When enable_tools is true, the LLM can automatically call these commands to answer questions
+# Example: User asks "What's the weather in Austin?" → LLM calls wx_command automatically
+# Default: wx,airplanes,satpass,path,stats,moon,sun,aurora
+# Supported tools: wx, airplanes, satpass, path, stats, moon, sun, aurora
+available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora
+
 # Channels where LLM command is allowed (omit to use global monitor_channels)
 # channels =
 # aliases = comma-separated list of additional trigger words
