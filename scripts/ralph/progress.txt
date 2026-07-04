@@ -141,3 +141,15 @@ Branch: ralph/llm-integration
   - Truncation with "...(truncated)" suffix happens when response exceeds max_response_parts
   - All 2875 tests pass - no test changes needed for this feature
 ---
+## 2026-07-04 - US-009
+- Implemented context pruning after each LLM response to prevent unbounded DB growth
+- Files changed:
+  - modules/commands/llm_command.py (added prune_context call after response sending)
+- **Learnings for future iterations:**
+  - Context pruning added after send_response/send_response_chunked to ensure message delivery succeeds first
+  - Pruning wrapped in try/except with error logging to prevent command execution failure
+  - Pruning uses self.context_max_exchanges and self.context_ttl_seconds from config
+  - Error messages include context_key for debugging: f"Context pruning error for key '{context_key}': {e}"
+  - All 2875 tests continue to pass - no test changes needed for this feature
+  - Pattern: Operations that cleanup/optimize should not block critical functionality (send response)
+---
