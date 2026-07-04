@@ -93,3 +93,37 @@ Branch: ralph/llm-integration
   - Configuration documentation is part of the feature (not separate docs)
   - All 2861 tests passed - config changes don't affect tests unless code reads them
 ---
+## 2026-07-04 - US-006
+- Implemented LLMCommand basic structure with configuration loading
+- Files changed:
+  - modules/commands/llm_command.py (new file - 158 lines)
+- **Learnings for future iterations:**
+  - Command plugins follow strict BaseCommand pattern from modules/commands/base_command.py
+  - Class attributes: name, keywords (list), description, category, requires_internet (bool)
+  - Commands must implement async execute(message: MeshMessage) -> bool
+  - Configuration loading uses self.get_config_value(section, key, fallback, value_type)
+  - Section names follow pattern: [CommandName_Command] (e.g., [LLM_Command], [Wx_Command])
+  - Enable flag checked in can_execute() override, not execute()
+  - Google-style docstrings required with Args:, Returns: sections
+  - get_help_text() returns multi-line string with command usage info
+  - Documentation fields: short_description, usage, examples, parameters (for website generation)
+  - Placeholder execute() methods acceptable for multi-story implementations
+  - mypy checks pass without special config for properly typed new modules
+  - ruff will flag unused imports - remove them to pass lint
+  - Full test suite (2861 tests) must pass - new command files don't break existing tests
+---
+## 2026-07-04 - US-007
+- Implemented LLMCommand execute() method with full context and Ollama integration
+- Files changed:
+  - modules/commands/llm_command.py (replaced placeholder execute with full implementation)
+- **Learnings for future iterations:**
+  - Commands access AsyncDBManager via self.bot.async_db_manager
+  - OllamaClient and LLMContextManager are initialized in __init__(), stored as instance variables
+  - Question extraction: strip command prefix (!) and keyword, return remaining text
+  - Context keys: use channel name for channels, sender_pubkey or sender_id for DMs
+  - Error handling pattern: catch specific exceptions (aiohttp errors), log them, send user-friendly messages
+  - Response flow: get_context → format_context_for_ollama → ollama.generate → add_message (user) → add_message (assistant) → send_response
+  - Helper methods should be private (_method_name) when only used internally
+  - All quality checks passed (mypy, ruff, 2875 tests all passing)
+  - Response chunking and context pruning are deferred to US-008 and US-009
+---
