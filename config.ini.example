@@ -1514,6 +1514,20 @@ tool_timeout = 10
 # When enable_tools is true, the LLM can automatically call these commands to answer questions
 # Default: wx,airplanes,satpass,path,stats,moon,sun,aurora
 # Supported tools: wx, airplanes, satpass, path, stats, moon, sun, aurora
+#
+# Example natural language queries that trigger tool calling:
+#   "What's the weather in Austin?" → calls wx_command with location=Austin
+#   "Show me nearby aircraft" → calls airplanes_command
+#   "When will ISS pass overhead?" → calls satpass_command with satellite=iss
+#   "What's the path to node A1B2?" → calls path_command with destination=A1B2
+#   "What's the weather and when is the next ISS pass?" → calls both wx and satpass
+#   "Show me network statistics" → calls stats_command
+#   "When is the next full moon?" → calls moon_command
+#   "What time is sunrise tomorrow?" → calls sun_command
+#   "Is there aurora activity tonight?" → calls aurora_command
+#
+# The LLM will automatically detect user intent and invoke the appropriate command(s)
+# to gather information, then formulate a natural language response.
 available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora
 
 # Channels where LLM command is allowed (omit to use global monitor_channels)
