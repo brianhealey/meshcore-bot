@@ -202,3 +202,34 @@
 
 ---
 
+## 2026-07-04 - US-008
+- **What was implemented:**
+  - Added tool calling integration to LLMCommand for executing commands via LLM function calling
+  - Added enable_tools, max_tools_per_query, and tool_timeout config options to LLMCommand.__init__
+  - Initialize ToolRegistry and ToolExecutor when enable_tools is true
+  - Implemented _execute_with_tools() method with tool-calling loop
+  - Loop: call chat() → check tool_calls → execute via ToolExecutor → add results to messages → repeat
+  - Respects max_tools_per_query limit (default: 3) to prevent abuse
+  - Handles tool execution errors gracefully and returns error messages to LLM
+  - Updated config.ini.example with enable_tools, max_tools_per_query, tool_timeout settings
+  - Added 10 comprehensive tests for tool-calling flow
+
+- **Files changed:**
+  - modules/commands/llm_command.py: Added tool calling config, imports, initialization, _execute_with_tools method
+  - modules/commands/llm_command.py: Modified execute() to use chat() when enable_tools is true
+  - config.ini.example: Added enable_tools, max_tools_per_query, tool_timeout settings with documentation
+  - tests/test_llm_command.py: Added TestLLMCommandToolCalling class with 10 test cases
+
+- **Learnings for future iterations:**
+  - ToolRegistry and ToolExecutor expect bot as first parameter, not separate config/logger
+  - tool_executor.execute_tool() takes timeout as parameter, not in __init__
+  - Type annotations for Optional types: use `ToolRegistry | None` instead of `Optional[ToolRegistry]`
+  - chat() returns full response dict with message.tool_calls array, not just content string
+  - Tool calling loop must handle multiple iterations until LLM returns final response
+  - Max iterations prevents infinite loops if LLM keeps requesting tools
+  - Tool results are added as {"role": "tool", "content": result} messages
+  - Final call should disable tools (tools=None) to force LLM to provide answer
+  - All 3037 tests pass, typecheck passes, 44.53% coverage
+
+---
+
