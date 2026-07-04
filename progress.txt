@@ -37,3 +37,29 @@
   - Typecheck and linting both passed without any issues
 
 ---
+
+## 2026-07-04 - US-002
+- **What was implemented:**
+  - Added user mention support to LLMCommand responses
+  - Implemented _add_user_mention() helper method in llm_command.py
+  - Added include_user_mention config loading in __init__ (default: true)
+  - Modified execute() to prefix all responses with "[@username] " when enabled
+  - Automatically skips mention for DMs
+  - Updated config.ini.example with include_user_mention setting and documentation
+  - Added 5 comprehensive tests for user mention functionality
+
+- **Files changed:**
+  - modules/commands/llm_command.py: Added include_user_mention config, _add_user_mention() method
+  - modules/commands/llm_command.py: Updated all response paths to use mention helper
+  - config.ini.example: Added include_user_mention setting with comments
+  - tests/test_llm_command.py: Added TestLLMCommandUserMention class with 5 test cases
+
+- **Learnings for future iterations:**
+  - MeshMessage.sender_id contains the user's name/identifier (not just an ID)
+  - User mentions should be prefixed to chunked responses BEFORE chunking to avoid splitting
+  - All response paths (success, error, clear-context) need mention support for consistency
+  - DM detection uses message.is_dm boolean flag
+  - Testing strategy: test enabled/disabled, channel/DM, and all response types
+  - Config defaults should favor user-friendly features (default: true for mentions)
+
+---
