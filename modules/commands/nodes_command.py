@@ -56,33 +56,41 @@ class NodesCommand(BaseCommand):
             # Query database for recent contacts
             with self.bot.db_manager.connection() as conn:
                 cursor = conn.cursor()
-                
-                # Get repeaters and companions with their node IDs
+
+                # Get repeaters and companions with their node prefixes
+                # Use complete_contact_tracking which has role and all needed fields
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         name,
-                        node_id,
+                        public_key,
                         role,
-                        last_seen,
-                        total_hops
-                    FROM repeater_contacts
-                    WHERE last_seen > datetime('now', '-7 days')
-                    ORDER BY last_seen DESC
+                        last_heard,
+                        out_path_len
+                    FROM complete_contact_tracking
+                    WHERE last_heard > datetime('now', '-7 days')
+                    ORDER BY last_heard DESC
                     LIMIT ?
                 """, (limit,))
-                
+
                 results = cursor.fetchall()
 
             if not results:
                 await self.send_response(message, "No nodes found in database.")
                 return True
 
+            # Get prefix length from bot config
+            prefix_hex_chars = getattr(self.bot, 'prefix_hex_chars', 2)
+
             # Format response
             response_lines = []
             for row in results:
-                name, node_id, role, last_seen, hops = row
+                name, public_key, role, last_heard, path_len = row
+                # Extract node ID (prefix) from public key
+                node_id = public_key[:prefix_hex_chars].lower() if public_key else "??"
                 # Shorten role names
                 role_short = role[0].upper() if role else "?"  # R for repeater, C for companion
+                # Calculate hops from path length (path_len can be None)
+                hops = path_len if path_len is not None else 0
                 # Format: Name (ID) R/C Hops
                 response_lines.append(f"{name} ({node_id}) {role_short} {hops}h")
 
