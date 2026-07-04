@@ -113,6 +113,12 @@ class LLMCommand(BaseCommand):
             value_type='str'
         )
 
+        # Load user mention setting
+        self.include_user_mention = self.get_config_value(
+            'LLM_Command', 'include_user_mention',
+            fallback=True, value_type='bool'
+        )
+
         # Initialize OllamaClient
         self.ollama_client = OllamaClient(
             endpoint=self.ollama_endpoint,
@@ -126,6 +132,16 @@ class LLMCommand(BaseCommand):
             async_db=bot.async_db_manager,
             logger=self.logger,
         )
+
+    async def cleanup(self) -> None:
+        """Clean up resources (close HTTP session).
+
+        This method should be called when the command is being unloaded or the bot is shutting down.
+        """
+        try:
+            await self.ollama_client.close()
+        except Exception as e:
+            self.logger.error(f"Error closing OllamaClient session: {e}")
 
     def can_execute(self, message: MeshMessage, skip_channel_check: bool = False) -> bool:
         """Check if this command can be executed with the given message.
@@ -178,30 +194,31 @@ class LLMCommand(BaseCommand):
             try:
                 success = await self.context_manager.clear_context(context_key)
                 if success:
-                    await self.send_response(message, "Conversation context cleared.")
+                    response = self._add_user_mention("Conversation context cleared.", message)
+                    await self.send_response(message, response)
                     return True
                 else:
-                    await self.send_response(
-                        message,
-                        "Failed to clear context. Please try again."
+                    response = self._add_user_mention(
+                        "Failed to clear context. Please try again.", message
                     )
+                    await self.send_response(message, response)
                     return False
             except Exception as e:
                 self.logger.error(f"Error clearing context for key '{context_key}': {e}")
-                await self.send_response(
-                    message,
-                    "An error occurred while clearing context."
+                response = self._add_user_mention(
+                    "An error occurred while clearing context.", message
                 )
+                await self.send_response(message, response)
                 return False
 
         # Extract the question from the message content
         question = self._extract_question(message.content)
 
         if not question:
-            await self.send_response(
-                message,
-                "Usage: !ask <question> or !clear-context"
+            response = self._add_user_mention(
+                "Usage: !ask <question> or !clear-context", message
             )
+            await self.send_response(message, response)
             return False
 
         try:
@@ -216,17 +233,18 @@ class LLMCommand(BaseCommand):
 
             # Query Ollama
             try:
-                response = await self.ollama_client.generate(
+                llm_response = await self.ollama_client.generate(
                     prompt=question,
                     context=context,
                     system_prompt=self.system_prompt,
                 )
             except Exception as e:
                 self.logger.error(f"Ollama generation error: {e}")
-                await self.send_response(
-                    message,
-                    "Sorry, I'm having trouble connecting to the AI service. Please try again later."
+                error_msg = self._add_user_mention(
+                    "Sorry, I'm having trouble connecting to the AI service. Please try again later.",
+                    message
                 )
+                await self.send_response(message, error_msg)
                 return False
 
             # Save user question and bot response to context
@@ -238,12 +256,15 @@ class LLMCommand(BaseCommand):
             await self.context_manager.add_message(
                 context_key=context_key,
                 role="assistant",
-                content=response,
+                content=llm_response,
             )
+
+            # Add user mention to response if configured
+            response_with_mention = self._add_user_mention(llm_response, message)
 
             # Chunk the response for LoRa compatibility
             chunks = chunk_llm_response(
-                text=response,
+                text=response_with_mention,
                 max_chunk_length=self.max_chunk_length,
                 max_parts=self.max_response_parts,
             )
@@ -271,10 +292,10 @@ class LLMCommand(BaseCommand):
 
         except Exception as e:
             self.logger.error(f"LLM command execution error: {e}")
-            await self.send_response(
-                message,
-                "Sorry, an error occurred while processing your request."
+            error_msg = self._add_user_mention(
+                "Sorry, an error occurred while processing your request.", message
             )
+            await self.send_response(message, error_msg)
             return False
 
     def _extract_question(self, content: str) -> Optional[str]:
@@ -341,3 +362,27 @@ class LLMCommand(BaseCommand):
 
         # Check if content matches 'clear-context' (case-insensitive)
         return content.lower().startswith('clear-context')
+
+    def _add_user_mention(self, response: str, message: MeshMessage) -> str:
+        """Add user mention prefix to response if configured.
+
+        Args:
+            response: The response text to potentially prefix
+            message: The message containing sender info
+
+        Returns:
+            The response with user mention prefix if enabled, otherwise unchanged
+        """
+        # Skip mention for DMs
+        if message.is_dm:
+            return response
+
+        # Skip mention if disabled in config
+        if not self.include_user_mention:
+            return response
+
+        # Extract sender name
+        sender_name = message.sender_id or "User"
+
+        # Add mention prefix
+        return f"[@{sender_name}] {response}"

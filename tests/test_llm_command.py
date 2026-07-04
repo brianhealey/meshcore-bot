@@ -1,6 +1,5 @@
 """Tests for modules/commands/llm_command.py — LLMCommand integration tests."""
 
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -13,17 +12,6 @@ from tests.conftest import mock_message
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def mock_logger():
-    """Create a mock logger for testing."""
-    logger = Mock()
-    logger.info = Mock()
-    logger.debug = Mock()
-    logger.warning = Mock()
-    logger.error = Mock()
-    return logger
 
 
 @pytest.fixture
@@ -471,16 +459,118 @@ class TestLLMCommandContextPruning:
         # Set max_exchanges to 2 for this test
         cmd.context_max_exchanges = 2
 
+        # Mock time.time() to return incrementing values for deterministic timestamp ordering
+        base_time = 1000.0
+        with patch('time.time', side_effect=[base_time + i * 10 for i in range(100)]):
+            with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+                mock_generate.return_value = "Response"
+
+                # Send 3 questions (each creates 2 messages: user + assistant)
+                for i in range(3):
+                    msg = mock_message(content=f"!ask Question {i+1}", channel="test", is_dm=False)
+                    await cmd.execute(msg)
+
+                # Verify context is limited to max_exchanges
+                context = await cmd.context_manager.get_context("test", max_exchanges=10)
+                # Should have at most max_exchanges * 2 messages (user + assistant per exchange)
+                assert len(context) <= cmd.context_max_exchanges * 2 + 2  # +2 for current exchange
+
+
+# ---------------------------------------------------------------------------
+# TestLLMCommandUserMention
+# ---------------------------------------------------------------------------
+
+
+class TestLLMCommandUserMention:
+    """Test LLMCommand user mention functionality."""
+
+    async def test_user_mention_enabled_for_channel_messages(self, command_mock_bot_with_llm):
+        """Test that user mention is added for channel messages when enabled."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.include_user_mention = True
+
         with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
-            mock_generate.return_value = "Response"
+            mock_generate.return_value = "This is the answer."
 
-            # Send 3 questions (each creates 2 messages: user + assistant)
-            for i in range(3):
-                msg = mock_message(content=f"!ask Question {i+1}", channel="test", is_dm=False)
-                await cmd.execute(msg)
-                time.sleep(0.01)  # Ensure timestamp ordering
+            msg = mock_message(content="!ask What is 2+2?", channel="test", is_dm=False)
+            msg.sender_id = "TestUser"
+            await cmd.execute(msg)
 
-            # Verify context is limited to max_exchanges
-            context = await cmd.context_manager.get_context("test", max_exchanges=10)
-            # Should have at most max_exchanges * 2 messages (user + assistant per exchange)
-            assert len(context) <= cmd.context_max_exchanges * 2 + 2  # +2 for current exchange
+            # Verify response includes user mention
+            call_args = command_mock_bot_with_llm.command_manager.send_response.call_args
+            assert call_args is not None
+            response_text = call_args[0][1]
+            assert response_text.startswith("[@TestUser]")
+            assert "This is the answer." in response_text
+
+    async def test_user_mention_disabled_for_dms(self, command_mock_bot_with_llm):
+        """Test that user mention is NOT added for DMs even when enabled."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.include_user_mention = True
+
+        with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+            mock_generate.return_value = "This is the answer."
+
+            msg = mock_message(content="!ask What is 2+2?", is_dm=True)
+            msg.sender_id = "TestUser"
+            await cmd.execute(msg)
+
+            # Verify response does NOT include user mention for DMs
+            call_args = command_mock_bot_with_llm.command_manager.send_response.call_args
+            assert call_args is not None
+            response_text = call_args[0][1]
+            assert not response_text.startswith("[@TestUser]")
+            assert response_text == "This is the answer."
+
+    async def test_user_mention_disabled_via_config(self, command_mock_bot_with_llm):
+        """Test that user mention is NOT added when disabled in config."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.include_user_mention = False
+
+        with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+            mock_generate.return_value = "This is the answer."
+
+            msg = mock_message(content="!ask What is 2+2?", channel="test", is_dm=False)
+            msg.sender_id = "TestUser"
+            await cmd.execute(msg)
+
+            # Verify response does NOT include user mention when disabled
+            call_args = command_mock_bot_with_llm.command_manager.send_response.call_args
+            assert call_args is not None
+            response_text = call_args[0][1]
+            assert not response_text.startswith("[@TestUser]")
+            assert response_text == "This is the answer."
+
+    async def test_user_mention_in_error_messages(self, command_mock_bot_with_llm):
+        """Test that user mention is added to error messages."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.include_user_mention = True
+
+        with patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock) as mock_generate:
+            mock_generate.side_effect = Exception("Ollama error")
+
+            msg = mock_message(content="!ask What is 2+2?", channel="test", is_dm=False)
+            msg.sender_id = "TestUser"
+            await cmd.execute(msg)
+
+            # Verify error response includes user mention
+            call_args = command_mock_bot_with_llm.command_manager.send_response.call_args
+            assert call_args is not None
+            response_text = call_args[0][1]
+            assert response_text.startswith("[@TestUser]")
+
+    async def test_user_mention_in_clear_context_response(self, command_mock_bot_with_llm):
+        """Test that user mention is added to clear-context response."""
+        cmd = LLMCommand(command_mock_bot_with_llm)
+        cmd.include_user_mention = True
+
+        msg = mock_message(content="!clear-context", channel="test", is_dm=False)
+        msg.sender_id = "TestUser"
+        await cmd.execute(msg)
+
+        # Verify clear-context response includes user mention
+        call_args = command_mock_bot_with_llm.command_manager.send_response.call_args
+        assert call_args is not None
+        response_text = call_args[0][1]
+        assert response_text.startswith("[@TestUser]")
+        assert "context cleared" in response_text.lower()

@@ -1454,8 +1454,9 @@ context_max_exchanges = 3
 
 # Context time-to-live in seconds
 # Conversation context older than this is automatically removed
-# Default: 86400 (24 hours)
-context_ttl_seconds = 86400
+# Default: 3600 (1 hour)
+# Increase to 86400 for 24-hour retention, or 604800 for 1 week
+context_ttl_seconds = 3600
 
 # Response chunking settings
 # Maximum length per chunk in characters
@@ -1477,6 +1478,12 @@ chunk_delay_seconds = 2.0
 # This guides the AI's personality and response style
 # Keep responses concise and LoRa-friendly (short, clear, no markdown)
 system_prompt = You are a helpful assistant on a LoRa mesh network. Keep responses VERY concise and clear. No markdown, no formatting, no emojis. Maximum 2-3 short sentences per response. Be direct and informative.
+
+# Include user mention in LLM responses
+# When true, all LLM responses include "[@username] " prefix for easy identification in busy channels
+# Automatically skipped for DMs
+# Default: true
+include_user_mention = true
 
 # Channels where LLM command is allowed (omit to use global monitor_channels)
 # channels =
