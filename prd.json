@@ -171,8 +171,8 @@
         "Tests pass for airplanes_command tool execution"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed - parameter metadata added, 8 new tests pass (4 schema + 4 execution), typecheck passes"
     },
     {
       "id": "US-011",

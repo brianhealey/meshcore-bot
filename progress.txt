@@ -257,3 +257,28 @@
 
 ---
 
+## 2026-07-04 - US-010
+- **What was implemented:**
+  - Added parameter metadata to AirplanesCommand with optional radius parameter (number type)
+  - Updated parameters list from 3 generic items to single well-typed parameter
+  - Added 4 schema generation tests in TestAirplanesCommandToolSchema class
+  - Added 4 tool execution tests in TestAirplanesCommandToolExecution class
+  - Added airplanes_command to mypy ignore_errors list in pyproject.toml
+
+- **Files changed:**
+  - modules/commands/airplanes_command.py: Updated parameters list with required/type metadata
+  - tests/test_tool_registry.py: Added TestAirplanesCommandToolSchema class with 4 tests
+  - tests/test_tool_executor.py: Added TestAirplanesCommandToolExecution class with 4 tests
+  - pyproject.toml: Added airplanes_command to mypy ignore_errors list
+
+- **Learnings for future iterations:**
+  - airplanes_command supports complex filtering but only radius is useful for LLM tool calls
+  - Other filters (type, callsign, military, etc.) are too niche for LLM to use reliably
+  - radius parameter is optional (default: 25nm) and type is "number" not "string"
+  - Command uses bot location or companion location automatically when no location specified
+  - Tests for tool execution verify both parameter passing and response content
+  - Mock fixture pattern: create mock command → set parameters → assign to mock_command_manager.commands
+  - All 3053 tests pass, typecheck passes, lint passes, 44.53% coverage
+
+---
+
