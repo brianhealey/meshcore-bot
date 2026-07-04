@@ -224,3 +224,89 @@ class TestGetAllToolSchemas:
 
         # Should have logged for each command
         assert mock_bot.logger.debug.call_count >= 3
+
+
+class TestWxCommandToolSchema:
+    """Tests for wx_command tool schema generation (US-009)."""
+
+    def test_wx_command_has_location_parameter_required(self):
+        """Test that wx command has location as required parameter."""
+        # Import actual wx_command to verify parameter metadata
+        from modules.commands.wx_command import WxCommand
+
+        params = WxCommand.parameters
+        location_param = next((p for p in params if p["name"] == "location"), None)
+
+        assert location_param is not None
+        assert location_param["required"] is True
+        assert location_param["type"] == "string"
+        assert "zip code" in location_param["description"].lower() or "city" in location_param["description"].lower()
+
+    def test_wx_command_has_forecast_type_parameter_optional(self):
+        """Test that wx command has forecast_type as optional parameter."""
+        from modules.commands.wx_command import WxCommand
+
+        params = WxCommand.parameters
+        forecast_param = next((p for p in params if p["name"] == "forecast_type"), None)
+
+        assert forecast_param is not None
+        assert forecast_param["required"] is False
+        assert forecast_param["type"] == "string"
+
+    def test_wx_command_forecast_type_has_enum(self):
+        """Test that forecast_type parameter has enum values."""
+        from modules.commands.wx_command import WxCommand
+
+        params = WxCommand.parameters
+        forecast_param = next((p for p in params if p["name"] == "forecast_type"), None)
+
+        assert forecast_param is not None
+        assert "enum" in forecast_param
+        assert "current" in forecast_param["enum"]
+        assert "tomorrow" in forecast_param["enum"]
+        assert "7d" in forecast_param["enum"]
+        assert "hourly" in forecast_param["enum"]
+        assert "alerts" in forecast_param["enum"]
+
+    def test_wx_command_generates_valid_tool_schema(self, tool_registry, mock_bot, mock_command_manager):
+        """Test that ToolRegistry generates valid schema for wx_command."""
+        # Create a real-like wx command with updated parameters
+        wx_cmd = MagicMock()
+        wx_cmd.name = "wx"
+        wx_cmd.short_description = "Get weather for a US location using NOAA weather data"
+        wx_cmd.parameters = [
+            {
+                "name": "location",
+                "description": "US zip code or city name",
+                "required": True,
+                "type": "string"
+            },
+            {
+                "name": "forecast_type",
+                "description": "Forecast type: current (default), tomorrow, 7d, hourly, or alerts",
+                "required": False,
+                "type": "string",
+                "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]
+            }
+        ]
+
+        schema = tool_registry.generate_tool_schema(wx_cmd)
+
+        # Verify schema structure
+        assert schema["type"] == "function"
+        assert schema["function"]["name"] == "wx"
+        assert schema["function"]["description"] == "Get weather for a US location using NOAA weather data"
+
+        # Verify parameters
+        params = schema["function"]["parameters"]
+        assert "location" in params["properties"]
+        assert "forecast_type" in params["properties"]
+
+        # Verify location is required
+        assert "location" in params["required"]
+        assert params["properties"]["location"]["type"] == "string"
+
+        # Verify forecast_type is optional
+        assert "forecast_type" not in params["required"]
+        assert params["properties"]["forecast_type"]["type"] == "string"
+        assert params["properties"]["forecast_type"]["enum"] == ["current", "tomorrow", "7d", "hourly", "alerts"]

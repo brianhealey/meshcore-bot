@@ -66,8 +66,19 @@ class WxCommand(BaseCommand):
     usage = "wx <zipcode|city> [tomorrow|<N>d|hourly|alerts]"
     examples = ["wx 98101", "wx seattle", "wx 90210 7d"]
     parameters = [
-        {"name": "location", "description": "US zip code or city name"},
-        {"name": "option", "description": "tomorrow, Nd (e.g. 7d, 10d), hourly, or alerts (optional)"}
+        {
+            "name": "location",
+            "description": "US zip code or city name",
+            "required": True,
+            "type": "string"
+        },
+        {
+            "name": "forecast_type",
+            "description": "Forecast type: current (default), tomorrow, 7d, hourly, or alerts",
+            "required": False,
+            "type": "string",
+            "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]
+        }
     ]
 
     # Error constants

@@ -328,3 +328,105 @@ class TestToolExecutorWithRealCommands:
         )
 
         assert "Path" in result or "hop" in result
+
+
+class TestWxCommandToolExecution:
+    """Tests for wx_command tool execution (US-009)."""
+
+    async def test_wx_command_with_location_only(self, tool_executor, sample_message, mock_command_manager):
+        """Test wx command execution with just location parameter."""
+        async def set_wx_response(msg):
+            # Verify message content has location
+            assert 'seattle' in msg.content.lower()
+            mock_wx.last_response = "Seattle, WA: Clear, 68°F. High 75°F, Low 55°F."
+            return True
+
+        mock_wx = AsyncMock()
+        mock_wx.execute = set_wx_response
+        mock_wx.last_response = None
+        mock_wx.parameters = [
+            {"name": "location", "description": "US zip code or city name", "required": True, "type": "string"},
+            {"name": "forecast_type", "description": "Forecast type", "required": False, "type": "string", "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]}
+        ]
+        mock_command_manager.commands = {'wx': mock_wx}
+
+        result = await tool_executor.execute_tool(
+            'wx',
+            {'location': 'seattle'},
+            sample_message
+        )
+
+        assert "Seattle" in result
+        assert "68°F" in result
+
+    async def test_wx_command_with_forecast_type_tomorrow(self, tool_executor, sample_message, mock_command_manager):
+        """Test wx command execution with forecast_type=tomorrow."""
+        async def set_wx_response(msg):
+            assert 'tomorrow' in msg.content.lower()
+            mock_wx.last_response = "Tomorrow in Seattle: Sunny, High 78°F, Low 58°F"
+            return True
+
+        mock_wx = AsyncMock()
+        mock_wx.execute = set_wx_response
+        mock_wx.last_response = None
+        mock_wx.parameters = [
+            {"name": "location", "description": "US zip code or city name", "required": True, "type": "string"},
+            {"name": "forecast_type", "description": "Forecast type", "required": False, "type": "string", "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]}
+        ]
+        mock_command_manager.commands = {'wx': mock_wx}
+
+        result = await tool_executor.execute_tool(
+            'wx',
+            {'location': 'seattle', 'forecast_type': 'tomorrow'},
+            sample_message
+        )
+
+        assert "Tomorrow" in result or "Sunny" in result
+
+    async def test_wx_command_with_forecast_type_7d(self, tool_executor, sample_message, mock_command_manager):
+        """Test wx command execution with forecast_type=7d."""
+        async def set_wx_response(msg):
+            assert '7d' in msg.content.lower() or '7 day' in msg.content.lower()
+            mock_wx.last_response = "7-day forecast for Seattle: Mon 72°F, Tue 75°F, Wed 70°F..."
+            return True
+
+        mock_wx = AsyncMock()
+        mock_wx.execute = set_wx_response
+        mock_wx.last_response = None
+        mock_wx.parameters = [
+            {"name": "location", "description": "US zip code or city name", "required": True, "type": "string"},
+            {"name": "forecast_type", "description": "Forecast type", "required": False, "type": "string", "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]}
+        ]
+        mock_command_manager.commands = {'wx': mock_wx}
+
+        result = await tool_executor.execute_tool(
+            'wx',
+            {'location': '98101', 'forecast_type': '7d'},
+            sample_message
+        )
+
+        assert "7-day" in result or "forecast" in result
+
+    async def test_wx_command_with_zip_code(self, tool_executor, sample_message, mock_command_manager):
+        """Test wx command execution with US zip code."""
+        async def set_wx_response(msg):
+            assert '98101' in msg.content
+            mock_wx.last_response = "98101 (Seattle, WA): Partly cloudy, 70°F"
+            return True
+
+        mock_wx = AsyncMock()
+        mock_wx.execute = set_wx_response
+        mock_wx.last_response = None
+        mock_wx.parameters = [
+            {"name": "location", "description": "US zip code or city name", "required": True, "type": "string"},
+            {"name": "forecast_type", "description": "Forecast type", "required": False, "type": "string", "enum": ["current", "tomorrow", "7d", "hourly", "alerts"]}
+        ]
+        mock_command_manager.commands = {'wx': mock_wx}
+
+        result = await tool_executor.execute_tool(
+            'wx',
+            {'location': '98101'},
+            sample_message
+        )
+
+        assert "98101" in result or "Seattle" in result
