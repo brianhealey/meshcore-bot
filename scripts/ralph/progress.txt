@@ -167,3 +167,21 @@ Branch: ralph/llm-integration
   - Context clearing is per-channel or per-user based on context_key (same as conversation context)
   - All 2861 tests pass - no test changes needed for this feature yet (US-014 will add integration tests)
 ---
+## 2026-07-04 - US-011
+- Implemented comprehensive unit tests for OllamaClient HTTP wrapper
+- Files changed:
+  - tests/test_ollama_client.py (new file - 496 lines, 25 tests)
+  - scripts/ralph/prd.json (updated US-011 passes: true)
+- **Learnings for future iterations:**
+  - Mocking aiohttp requires patching `_get_session()` method, not setting `session` directly
+  - Use `patch.object(client, '_get_session', return_value=mock_session)` pattern
+  - Mock context managers with `__aenter__` and `__aexit__` AsyncMock methods
+  - aiohttp exception hierarchy: ServerTimeoutError is caught by ClientError handler (order matters)
+  - Test pattern: Create mock response → Create mock session → Patch _get_session → Execute → Assert
+  - Helper functions `_make_mock_response()` and `_make_context_manager()` reduce test boilerplate
+  - Coverage of 93% achieved (ollama_client.py lines 136-137, 141-143 are unreachable dead code paths)
+  - All 2886 existing tests continue to pass + 25 new tests = 2911 total tests passing
+  - Test organization: TestInit, TestGenerate, TestHealthCheck, TestClose, TestGetSession classes
+  - Use pytest fixtures for shared setup (mock_logger, ollama_client)
+---
+
