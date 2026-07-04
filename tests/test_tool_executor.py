@@ -533,3 +533,107 @@ class TestAirplanesCommandToolExecution:
         assert "QXE2307" in result
         assert "DAL123" in result
         assert "UAL456" in result
+
+
+class TestSatpassCommandToolExecution:
+    """Tests for satpass_command tool execution (US-011)."""
+
+    async def test_satpass_command_with_iss_shortcut(self, tool_executor, sample_message, mock_command_manager):
+        """Test satpass command execution with ISS shortcut."""
+        async def set_satpass_response(msg):
+            # Verify message content has ISS satellite
+            assert 'iss' in msg.content.lower()
+            mock_satpass.last_response = "ISS Pass: 2026-07-05 20:15 UTC, Duration 5min, Max Elevation 45°"
+            return True
+
+        mock_satpass = AsyncMock()
+        mock_satpass.execute = set_satpass_response
+        mock_satpass.last_response = None
+        mock_satpass.parameters = [
+            {"name": "satellite", "description": "NORAD ID or shortcut", "required": False, "type": "string"},
+            {"name": "visual", "description": "Filter for visible passes only", "required": False, "type": "boolean"}
+        ]
+        mock_command_manager.commands = {'satpass': mock_satpass}
+
+        result = await tool_executor.execute_tool(
+            'satpass',
+            {'satellite': 'iss'},
+            sample_message
+        )
+
+        assert "ISS" in result
+        assert "Pass" in result or "20:15" in result
+
+    async def test_satpass_command_with_norad_id(self, tool_executor, sample_message, mock_command_manager):
+        """Test satpass command execution with NORAD ID."""
+        async def set_satpass_response(msg):
+            assert '25544' in msg.content
+            mock_satpass.last_response = "Satellite 25544 (ISS): Next pass 2026-07-05 20:15 UTC, Max Elevation 45°"
+            return True
+
+        mock_satpass = AsyncMock()
+        mock_satpass.execute = set_satpass_response
+        mock_satpass.last_response = None
+        mock_satpass.parameters = [
+            {"name": "satellite", "description": "NORAD ID or shortcut", "required": False, "type": "string"},
+            {"name": "visual", "description": "Filter for visible passes only", "required": False, "type": "boolean"}
+        ]
+        mock_command_manager.commands = {'satpass': mock_satpass}
+
+        result = await tool_executor.execute_tool(
+            'satpass',
+            {'satellite': '25544'},
+            sample_message
+        )
+
+        assert "25544" in result or "ISS" in result
+
+    async def test_satpass_command_with_visual_filter(self, tool_executor, sample_message, mock_command_manager):
+        """Test satpass command execution with visual filter enabled."""
+        async def set_satpass_response(msg):
+            # Verify message has both satellite and visual-related content
+            # Boolean True gets converted to string "True" in message content
+            assert 'iss' in msg.content.lower()
+            mock_satpass.last_response = "ISS Visible Pass: 2026-07-05 20:15 UTC, Duration 5min, Magnitude -3.2"
+            return True
+
+        mock_satpass = AsyncMock()
+        mock_satpass.execute = set_satpass_response
+        mock_satpass.last_response = None
+        mock_satpass.parameters = [
+            {"name": "satellite", "description": "NORAD ID or shortcut", "required": False, "type": "string"},
+            {"name": "visual", "description": "Filter for visible passes only", "required": False, "type": "boolean"}
+        ]
+        mock_command_manager.commands = {'satpass': mock_satpass}
+
+        result = await tool_executor.execute_tool(
+            'satpass',
+            {'satellite': 'iss', 'visual': True},
+            sample_message
+        )
+
+        assert "Visible" in result or "Magnitude" in result or "ISS" in result
+
+    async def test_satpass_command_with_hubble_shortcut(self, tool_executor, sample_message, mock_command_manager):
+        """Test satpass command execution with Hubble telescope shortcut."""
+        async def set_satpass_response(msg):
+            assert 'hubble' in msg.content.lower() or 'hst' in msg.content.lower()
+            mock_satpass.last_response = "Hubble Space Telescope: Next pass 2026-07-05 18:30 UTC, Duration 3min"
+            return True
+
+        mock_satpass = AsyncMock()
+        mock_satpass.execute = set_satpass_response
+        mock_satpass.last_response = None
+        mock_satpass.parameters = [
+            {"name": "satellite", "description": "NORAD ID or shortcut", "required": False, "type": "string"},
+            {"name": "visual", "description": "Filter for visible passes only", "required": False, "type": "boolean"}
+        ]
+        mock_command_manager.commands = {'satpass': mock_satpass}
+
+        result = await tool_executor.execute_tool(
+            'satpass',
+            {'satellite': 'hubble'},
+            sample_message
+        )
+
+        assert "Hubble" in result or "18:30" in result

@@ -371,3 +371,75 @@ class TestAirplanesCommandToolSchema:
         airplanes_schema = next((s for s in schemas if s["function"]["name"] == "airplanes"), None)
         assert airplanes_schema is not None
         assert airplanes_schema["function"]["description"] == "Get information about nearby aircraft using ADS-B data"
+
+
+class TestSatpassCommandToolSchema:
+    """Tests for satpass_command tool schema generation (US-011)."""
+
+    def test_satpass_command_has_satellite_parameter_optional(self):
+        """Test that satpass command has satellite as optional parameter."""
+        from modules.commands.satpass_command import SatpassCommand
+
+        params = SatpassCommand.parameters
+        satellite_param = next((p for p in params if p["name"] == "satellite"), None)
+
+        assert satellite_param is not None
+        assert satellite_param["required"] is False
+        assert satellite_param["type"] == "string"
+        assert "NORAD" in satellite_param["description"] or "shortcut" in satellite_param["description"]
+
+    def test_satpass_command_has_visual_parameter_optional(self):
+        """Test that satpass command has visual as optional boolean parameter."""
+        from modules.commands.satpass_command import SatpassCommand
+
+        params = SatpassCommand.parameters
+        visual_param = next((p for p in params if p["name"] == "visual"), None)
+
+        assert visual_param is not None
+        assert visual_param["required"] is False
+        assert visual_param["type"] == "boolean"
+
+    def test_satpass_command_description(self):
+        """Test that satpass command has correct description."""
+        from modules.commands.satpass_command import SatpassCommand
+
+        assert SatpassCommand.short_description == "Get satellite pass predictions"
+
+    def test_satpass_command_generates_valid_tool_schema(self, tool_registry, mock_bot, mock_command_manager):
+        """Test that ToolRegistry generates valid schema for satpass_command."""
+        # Create a real-like satpass command with updated parameters
+        satpass_cmd = MagicMock()
+        satpass_cmd.name = "satpass"
+        satpass_cmd.short_description = "Get satellite pass information for ISS and other satellites"
+        satpass_cmd.parameters = [
+            {
+                "name": "satellite",
+                "description": "NORAD ID or shortcut (iss, hst, starlink, hubble, tiangong, goes18)",
+                "required": False,
+                "type": "string"
+            },
+            {
+                "name": "visual",
+                "description": "Filter for visible passes only",
+                "required": False,
+                "type": "boolean"
+            }
+        ]
+
+        schema = tool_registry.generate_tool_schema(satpass_cmd)
+
+        # Verify schema structure
+        assert schema["type"] == "function"
+        assert schema["function"]["name"] == "satpass"
+        assert schema["function"]["description"] == "Get satellite pass information for ISS and other satellites"
+
+        # Verify parameters
+        params = schema["function"]["parameters"]
+        assert "satellite" in params["properties"]
+        assert "visual" in params["properties"]
+
+        # Verify both parameters are optional
+        assert "satellite" not in params["required"]
+        assert "visual" not in params["required"]
+        assert params["properties"]["satellite"]["type"] == "string"
+        assert params["properties"]["visual"]["type"] == "boolean"

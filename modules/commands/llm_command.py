@@ -4,7 +4,7 @@ LLM command for the MeshCore Bot
 Provides conversational AI capabilities via Ollama with LoRa-optimized response chunking
 """
 
-from typing import Optional, Any
+from typing import Any, Optional
 
 from ..llm_context_manager import LLMContextManager
 from ..models import MeshMessage

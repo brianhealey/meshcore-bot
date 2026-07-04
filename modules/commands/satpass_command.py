@@ -23,8 +23,18 @@ class SatpassCommand(BaseCommand):
     usage = "satpass <NORAD_number|shortcut> [visual]"
     examples = ["satpass iss", "satpass 25544 visual"]
     parameters = [
-        {"name": "satellite", "description": "NORAD ID or shortcut (iss, hst, starlink)"},
-        {"name": "visual", "description": "Add 'visual' for visible passes only"}
+        {
+            "name": "satellite",
+            "description": "NORAD ID or shortcut (iss, hst, starlink, hubble, tiangong, goes18)",
+            "required": False,
+            "type": "string"
+        },
+        {
+            "name": "visual",
+            "description": "Filter for visible passes only",
+            "required": False,
+            "type": "boolean"
+        }
     ]
 
     # Common satellite shortcuts
