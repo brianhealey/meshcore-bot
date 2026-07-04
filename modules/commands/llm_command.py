@@ -119,6 +119,12 @@ class LLMCommand(BaseCommand):
             fallback=True, value_type='bool'
         )
 
+        # Load command context tracking setting
+        self.track_all_commands = self.get_config_value(
+            'LLM_Command', 'track_all_commands',
+            fallback=True, value_type='bool'
+        )
+
         # Initialize OllamaClient
         self.ollama_client = OllamaClient(
             endpoint=self.ollama_endpoint,

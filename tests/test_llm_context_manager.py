@@ -527,3 +527,147 @@ class TestErrorHandling:
 
         # Error should be logged
         mock_logger.error.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestAddCommandContext
+# ---------------------------------------------------------------------------
+
+
+class TestAddCommandContext:
+    """Test LLMContextManager.add_command_context()."""
+
+    async def test_add_command_context_success(self, context_manager):
+        """Test adding command context successfully."""
+        result = await context_manager.add_command_context(
+            context_key="test_key",
+            command_name="wx",
+            user_input="!wx Austin",
+            bot_response="Austin: 72°F, Sunny",
+            sender_name="TestUser",
+        )
+        assert result is True
+
+        # Verify both user and assistant messages were stored
+        context = await context_manager.get_context("test_key")
+        assert len(context) == 2
+        assert context[0]["role"] == "user"
+        assert context[0]["content"] == "!wx Austin"
+        assert context[0]["command_name"] == "wx"
+        assert context[0]["sender_name"] == "TestUser"
+        assert context[1]["role"] == "assistant"
+        assert context[1]["content"] == "Austin: 72°F, Sunny"
+        assert context[1]["command_name"] == "wx"
+        assert context[1]["sender_name"] == "TestUser"
+
+    async def test_add_command_context_without_sender_name(self, context_manager):
+        """Test adding command context without sender_name."""
+        result = await context_manager.add_command_context(
+            context_key="test_key",
+            command_name="ping",
+            user_input="!ping",
+            bot_response="Pong!",
+        )
+        assert result is True
+
+        context = await context_manager.get_context("test_key")
+        assert len(context) == 2
+        assert context[0]["sender_name"] is None
+        assert context[1]["sender_name"] is None
+
+    async def test_command_context_timestamps(self, context_manager):
+        """Test that command context entries have slightly different timestamps."""
+        await context_manager.add_command_context(
+            context_key="test_key",
+            command_name="wx",
+            user_input="!wx Austin",
+            bot_response="Austin: 72°F, Sunny",
+        )
+
+        context = await context_manager.get_context("test_key")
+        assert len(context) == 2
+        # Assistant timestamp should be slightly after user timestamp
+        assert context[1]["timestamp"] > context[0]["timestamp"]
+
+    async def test_command_context_mixed_with_regular_messages(self, context_manager):
+        """Test command context can be mixed with regular LLM messages."""
+        # Add regular message
+        await context_manager.add_message("test_key", "user", "Hello")
+        await context_manager.add_message("test_key", "assistant", "Hi!")
+
+        # Add command context
+        await context_manager.add_command_context(
+            context_key="test_key",
+            command_name="wx",
+            user_input="!wx Austin",
+            bot_response="Austin: 72°F",
+        )
+
+        # Add another regular message
+        await context_manager.add_message("test_key", "user", "Thanks")
+
+        context = await context_manager.get_context("test_key")
+        assert len(context) == 5
+
+        # Check that we have both regular messages and command context
+        regular_messages = [msg for msg in context if msg["command_name"] is None]
+        command_messages = [msg for msg in context if msg["command_name"] == "wx"]
+
+        assert len(regular_messages) == 3  # "Hello", "Hi!", "Thanks"
+        assert len(command_messages) == 2  # user command + assistant response
+
+    async def test_command_context_error_handling(self, async_db_manager, mock_logger):
+        """Test that add_command_context returns False on error and logs it."""
+        manager = LLMContextManager(async_db_manager, mock_logger)
+        manager.async_db = None  # Force error
+
+        result = await manager.add_command_context(
+            context_key="test_key",
+            command_name="wx",
+            user_input="!wx Austin",
+            bot_response="Austin: 72°F",
+        )
+
+        assert result is False
+        mock_logger.error.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestCommandContextFields
+# ---------------------------------------------------------------------------
+
+
+class TestCommandContextFields:
+    """Test that command_name and sender_name fields are properly handled."""
+
+    async def test_get_context_includes_new_fields(self, context_manager):
+        """Test that get_context includes command_name and sender_name."""
+        await context_manager.add_message("test_key", "user", "Regular message")
+
+        context = await context_manager.get_context("test_key")
+        assert len(context) == 1
+        assert "command_name" in context[0]
+        assert "sender_name" in context[0]
+        assert context[0]["command_name"] is None
+        assert context[0]["sender_name"] is None
+
+    async def test_format_context_with_command_fields(self, context_manager):
+        """Test that format_context_for_ollama works with command context."""
+        await context_manager.add_command_context(
+            context_key="test_key",
+            command_name="wx",
+            user_input="!wx Austin",
+            bot_response="Austin: 72°F",
+            sender_name="TestUser",
+        )
+
+        context = await context_manager.get_context("test_key")
+        formatted = LLMContextManager.format_context_for_ollama(context)
+
+        # Formatted context should only have role and content
+        assert len(formatted) == 2
+        assert formatted[0] == {"role": "user", "content": "!wx Austin"}
+        assert formatted[1] == {"role": "assistant", "content": "Austin: 72°F"}
+        # command_name and sender_name should not be in formatted output
+        assert "command_name" not in formatted[0]
+        assert "sender_name" not in formatted[0]

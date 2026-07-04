@@ -1485,6 +1485,13 @@ system_prompt = You are a helpful assistant on a LoRa mesh network. Keep respons
 # Default: true
 include_user_mention = true
 
+# Track all command executions in LLM conversation context
+# When true, stores ALL command interactions (not just !ask) so the LLM can reference them
+# Example: "!wx Austin" → "Austin: 72°F" becomes part of conversation history
+# Enables queries like "Is it warmer than the last weather report?"
+# Default: true
+track_all_commands = true
+
 # Channels where LLM command is allowed (omit to use global monitor_channels)
 # channels =
 # aliases = comma-separated list of additional trigger words

@@ -64,7 +64,8 @@ class LLMContextManager:
             async with self.async_db.connection() as conn:
                 async with conn.execute(
                     '''
-                    SELECT id, context_key, role, content, timestamp, created_at
+                    SELECT id, context_key, role, content, timestamp, created_at,
+                           command_name, sender_name
                     FROM llm_conversation_context
                     WHERE context_key = ?
                     ORDER BY timestamp DESC
@@ -84,6 +85,8 @@ class LLMContextManager:
                             'content': row[3],
                             'timestamp': row[4],
                             'created_at': row[5],
+                            'command_name': row[6],
+                            'sender_name': row[7],
                         })
 
                     return messages
@@ -129,6 +132,64 @@ class LLMContextManager:
         except Exception as e:
             self.logger.error(
                 f"Error adding message to context '{context_key}' (role={role}): {e}"
+            )
+            return False
+
+    async def add_command_context(
+        self,
+        context_key: str,
+        command_name: str,
+        user_input: str,
+        bot_response: str,
+        sender_name: Optional[str] = None,
+    ) -> bool:
+        """Save command execution context to the conversation history.
+
+        Stores both the user's command input and the bot's response as context
+        entries, enabling the LLM to reference previous command interactions.
+
+        Args:
+            context_key: Unique identifier for the conversation context
+            command_name: Name of the command that was executed (e.g., "wx", "airplanes")
+            user_input: The user's original command input
+            bot_response: The bot's response to the command
+            sender_name: Optional name of the user who sent the command
+
+        Returns:
+            True if both messages were saved successfully, False otherwise.
+        """
+        try:
+            timestamp = time.time()
+
+            async with self.async_db.connection() as conn:
+                # Add user command as context
+                await conn.execute(
+                    '''
+                    INSERT INTO llm_conversation_context
+                    (context_key, role, content, timestamp, command_name, sender_name)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ''',
+                    (context_key, "user", user_input, timestamp, command_name, sender_name),
+                )
+
+                # Add bot response as context
+                await conn.execute(
+                    '''
+                    INSERT INTO llm_conversation_context
+                    (context_key, role, content, timestamp, command_name, sender_name)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ''',
+                    (context_key, "assistant", bot_response, timestamp + 0.001, command_name, sender_name),
+                )
+
+                await conn.commit()
+
+            return True
+
+        except Exception as e:
+            self.logger.error(
+                f"Error adding command context '{context_key}' "
+                f"(command={command_name}, sender={sender_name}): {e}"
             )
             return False
 
@@ -224,13 +285,19 @@ class LLMContextManager:
         Transforms the database representation of conversation history into the
         format expected by OllamaClient.generate()'s context parameter.
 
+        Command context entries (with command_name set) are included in the
+        conversation history alongside regular LLM messages, allowing the LLM
+        to reference previous command outputs when answering questions.
+
         Args:
             context: List of message dicts from get_context() with keys:
-                    id, context_key, role, content, timestamp, created_at
+                    id, context_key, role, content, timestamp, created_at,
+                    command_name (optional), sender_name (optional)
 
         Returns:
             List of message dicts in Ollama format with keys: role, content
-            Example: [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}]
+            Example: [{"role": "user", "content": "!wx Austin"},
+                     {"role": "assistant", "content": "Austin: 72°F, Sunny"}]
         """
         return [
             {
