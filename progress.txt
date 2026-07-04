@@ -122,3 +122,28 @@
 
 ---
 
+## 2026-07-04 - US-005
+- **What was implemented:**
+  - Added chat() async method to OllamaClient class for tool calling support
+  - Method accepts messages (list of dicts), tools (optional list), and stream (bool) parameters
+  - Calls /api/chat endpoint with tool definitions in OpenAI function format
+  - Returns full response dict including message with optional tool_calls array
+  - Handles errors and timeouts consistently with existing generate() method
+  - Added 10 comprehensive tests covering all chat() scenarios
+
+- **Files changed:**
+  - modules/ollama_client.py: Added chat() method (76 lines)
+  - tests/test_ollama_client.py: Added TestChat class with 10 test cases
+
+- **Learnings for future iterations:**
+  - chat() returns full response dict (not just content string like generate())
+  - Response includes: message (dict with role, content, optional tool_calls), done (bool), model (str)
+  - Tools parameter is optional - only included in payload if provided
+  - Stream parameter defaults to False (consistent with generate())
+  - Error handling pattern: validate response has 'message' field, then validate it's a dict
+  - Tool calls are returned as part of message dict: message["tool_calls"] if present
+  - All 3005 tests pass, typecheck passes, lint passes
+  - OllamaClient now supports both generate() for simple text and chat() for tool calling
+
+---
+
