@@ -1,0 +1,39 @@
+# LLM Tool Calling Integration - Progress Log
+
+## Codebase Patterns
+- Database migrations go in modules/db_migrations.py with sequential IDs
+- Migrations use helper functions like _add_column() for safe column additions
+- Each migration is a function named _mNNNN_description(cursor)
+- Migrations are registered in MIGRATIONS list as (version, description, function)
+- Never modify existing migrations - always add new ones
+- Use _column_exists() to make migrations idempotent
+- Test migrations by adding tests in tests/test_db_migrations.py
+- Use tmp_path fixture for test databases (not :memory:)
+- Typecheck with: .venv/bin/mypy modules/db_migrations.py --config-file=pyproject.toml
+- Lint with: .venv/bin/ruff check modules/
+
+---
+
+## 2026-07-04 - US-001
+- **What was implemented:**
+  - Added migration _m0014_extend_llm_context_for_commands to extend llm_conversation_context table
+  - Added command_name column (nullable TEXT) to track which command was executed
+  - Added sender_name column (nullable TEXT) to support user mentions in responses
+  - Registered migration as version 14 in MIGRATIONS list
+  - Added two test cases to verify columns are created after migration
+
+- **Files changed:**
+  - modules/db_migrations.py: Added _m0014_extend_llm_context_for_commands migration function
+  - modules/db_migrations.py: Added migration entry to MIGRATIONS list
+  - tests/test_db_migrations.py: Added test_llm_conversation_context_has_command_name
+  - tests/test_db_migrations.py: Added test_llm_conversation_context_has_sender_name
+
+- **Learnings for future iterations:**
+  - Migration helper functions (_add_column, _column_exists) make it easy to add nullable columns safely
+  - The pattern is: define migration function, register in MIGRATIONS list, add test
+  - Tests use runner.run() to apply all migrations, then check column existence with _column_exists()
+  - Migration 13 created the base llm_conversation_context table, migration 14 extends it
+  - Migration numbering is sequential and must never be skipped or reused
+  - Typecheck and linting both passed without any issues
+
+---

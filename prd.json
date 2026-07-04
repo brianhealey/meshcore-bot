@@ -1,0 +1,263 @@
+{
+  "project": "MeshCore Bot",
+  "branchName": "ralph/llm-tools-integration",
+  "description": "LLM Tool Calling Integration - Enable natural language queries to invoke bot commands with context tracking and user mentions",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Extend database schema for command context tracking",
+      "description": "As a developer, I need to extend the llm_conversation_context table to support tracking all command interactions, not just !ask queries.",
+      "acceptanceCriteria": [
+        "Add command_name column to llm_conversation_context table (nullable TEXT)",
+        "Add sender_name column to llm_conversation_context table for user mentions (nullable TEXT)",
+        "Create and run migration _m0014_extend_llm_context_for_commands",
+        "Migration registered in MIGRATIONS list in db_migrations.py",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completed - migration added, tests pass, typecheck passes"
+    },
+    {
+      "id": "US-002",
+      "title": "Add user mention support to LLMCommand",
+      "description": "As a mesh network user, I want to be mentioned when the bot responds to my message so I can easily identify responses directed at me.",
+      "acceptanceCriteria": [
+        "Extract sender name from MeshMessage in LLMCommand.execute()",
+        "Add include_user_mention config option (default: true) to [LLM_Command] section",
+        "Prefix all LLM responses with '[@username] ' when include_user_mention is true",
+        "Skip mention prefix for DMs (is_dm=true)",
+        "Update config.ini.example with include_user_mention setting",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Extend LLMContextManager to support command context",
+      "description": "As a developer, I need LLMContextManager to store and retrieve context from all command executions.",
+      "acceptanceCriteria": [
+        "Add add_command_context() method to LLMContextManager with parameters: context_key, command_name, user_input, bot_response, sender_name",
+        "Update get_context() to include command context entries in chronological order",
+        "Update format_context_for_ollama() to handle command context entries with role='system' or 'user' appropriately",
+        "Add track_all_commands config option (default: true) to [LLM_Command] section",
+        "Update config.ini.example with track_all_commands setting",
+        "Typecheck passes",
+        "Tests pass for add_command_context() and retrieval"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Hook MessageHandler to capture all command context",
+      "description": "As a developer, I need MessageHandler to automatically capture and store context for all command executions.",
+      "acceptanceCriteria": [
+        "Add context capture hook in MessageHandler after successful command execution",
+        "Extract context_key using same logic as LLMCommand (channel name or sender pubkey)",
+        "Call LLMContextManager.add_command_context() with command name, user input, and bot response",
+        "Only capture context if track_all_commands config is enabled",
+        "Skip capturing context for !ask and !clear-context commands (already handled by LLMCommand)",
+        "Typecheck passes",
+        "Tests pass for context capture flow"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add OllamaClient.chat() method for tool calling",
+      "description": "As a developer, I need OllamaClient to support the /api/chat endpoint with tool definitions for function calling.",
+      "acceptanceCriteria": [
+        "Add chat() async method to OllamaClient class",
+        "Accept parameters: messages (list), tools (list), stream (bool, default False)",
+        "Call /api/chat endpoint instead of /api/generate",
+        "Parse response for tool_calls array in message",
+        "Return full response including tool_calls if present",
+        "Handle errors and timeouts consistently with generate() method",
+        "Typecheck passes",
+        "Tests pass for chat() method with mock responses"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Create ToolRegistry for command discovery and schema generation",
+      "description": "As a developer, I need a ToolRegistry to discover available commands and generate OpenAI-compatible tool schemas.",
+      "acceptanceCriteria": [
+        "Create new module modules/tool_registry.py with ToolRegistry class",
+        "Implement get_available_commands() to discover whitelisted commands from CommandManager",
+        "Implement generate_tool_schema() for a single command to OpenAI function format",
+        "Implement get_all_tool_schemas() to return list of all tool schemas",
+        "Read available_tools config from [LLM_Command] section (comma-separated list)",
+        "Only include commands in whitelist (wx,airplanes,satpass,path,stats,moon,sun,aurora)",
+        "Typecheck passes",
+        "Tests pass for schema generation"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Create ToolExecutor for executing tool calls",
+      "description": "As a developer, I need a ToolExecutor to parse tool calls from LLM and execute commands safely.",
+      "acceptanceCriteria": [
+        "Create new module modules/tool_executor.py with ToolExecutor class",
+        "Implement execute_tool() method accepting tool_name and arguments dict",
+        "Create synthetic MeshMessage from arguments for command execution",
+        "Execute command via CommandManager with 10-second timeout",
+        "Capture command output and return as string",
+        "Handle errors gracefully and return error message to LLM",
+        "Validate tool_name against whitelist before execution",
+        "Typecheck passes",
+        "Tests pass for tool execution flow"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Integrate tool calling into LLMCommand.execute()",
+      "description": "As a developer, I need LLMCommand to detect tool calls from LLM and execute them in a loop until final response.",
+      "acceptanceCriteria": [
+        "Add enable_tools config option (default: false) to [LLM_Command] section",
+        "Load ToolRegistry and ToolExecutor in LLMCommand.__init__()",
+        "Modify execute() to use chat() instead of generate() when enable_tools is true",
+        "Implement tool-calling loop: call LLM → check for tool_calls → execute tools → add results to messages → repeat",
+        "Add max_tools_per_query config option (default: 3) to prevent abuse",
+        "Add tool_timeout config option (default: 10) for execution timeout",
+        "Update config.ini.example with tool settings",
+        "Typecheck passes",
+        "Tests pass for tool-calling flow"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add tool schema for wx_command",
+      "description": "As a developer, I need ToolRegistry to generate accurate schema for weather command.",
+      "acceptanceCriteria": [
+        "ToolRegistry generates schema for wx_command with location parameter (required)",
+        "Include forecast_type parameter (optional, enum: current/tomorrow/7d/hourly)",
+        "Schema description: 'Get weather conditions and forecast for a location'",
+        "ToolExecutor can execute wx_command with extracted location",
+        "Typecheck passes",
+        "Tests pass for wx_command tool execution"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add tool schema for airplanes_command",
+      "description": "As a developer, I need ToolRegistry to generate accurate schema for aircraft tracking command.",
+      "acceptanceCriteria": [
+        "ToolRegistry generates schema for airplanes_command with optional radius parameter",
+        "Schema description: 'Get information about nearby aircraft using ADS-B data'",
+        "ToolExecutor can execute airplanes_command with optional radius",
+        "Typecheck passes",
+        "Tests pass for airplanes_command tool execution"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add tool schema for satpass_command",
+      "description": "As a developer, I need ToolRegistry to generate accurate schema for satellite pass command.",
+      "acceptanceCriteria": [
+        "ToolRegistry generates schema for satpass_command with optional satellite parameter",
+        "Schema description: 'Get satellite pass information for ISS and other satellites'",
+        "ToolExecutor can execute satpass_command with satellite name",
+        "Typecheck passes",
+        "Tests pass for satpass_command tool execution"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Add tool schema for path_command",
+      "description": "As a developer, I need ToolRegistry to generate accurate schema for network path analysis command.",
+      "acceptanceCriteria": [
+        "ToolRegistry generates schema for path_command with destination parameter (required)",
+        "Schema description: 'Analyze mesh network path to a destination node, showing repeaters and signal quality'",
+        "ToolExecutor can execute path_command with destination node",
+        "Typecheck passes",
+        "Tests pass for path_command tool execution"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add integration test for end-to-end tool calling flow",
+      "description": "As a developer, I need integration tests to verify the complete tool calling workflow.",
+      "acceptanceCriteria": [
+        "Create test_llm_tool_calling.py in tests/ directory",
+        "Test: User asks weather question → LLM calls wx_command → response includes weather data",
+        "Test: User asks airplane question → LLM calls airplanes_command → response includes aircraft",
+        "Test: Multi-tool query calls both wx and satpass tools",
+        "Test: Invalid tool call is rejected gracefully",
+        "Test: Tool timeout is handled with error message",
+        "Test: User mention prefix is added to responses",
+        "Test: Command context is stored for non-!ask commands",
+        "All integration tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Add configuration documentation for tool calling",
+      "description": "As a bot administrator, I need clear documentation on how to configure and use tool calling features.",
+      "acceptanceCriteria": [
+        "Update config.ini.example with all tool calling settings and comments",
+        "Add [LLM_Tools] section with tool-specific defaults",
+        "Document enable_tools, max_tools_per_query, tool_timeout, available_tools",
+        "Document include_user_mention and track_all_commands settings",
+        "Add example queries to help users understand natural language capabilities",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Deploy and test tool calling on remote bot instance",
+      "description": "As a bot administrator, I want to deploy the tool calling feature to the production bot and verify it works.",
+      "acceptanceCriteria": [
+        "Deploy updated code to brian@10.100.10.49:/opt/meshcore-bot",
+        "Run database migration to add command context columns",
+        "Update config.ini with enable_tools=true and tool settings",
+        "Restart bot service and verify it loads without errors",
+        "Test natural language weather query on #beeboopbot channel",
+        "Test natural language airplane query on #beeboopbot channel",
+        "Verify user mention appears in responses",
+        "Verify command context is stored for !wx and other commands",
+        "All manual tests pass on production instance"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
