@@ -142,6 +142,82 @@ class OllamaClient:
             self.logger.error(f"Unexpected error during Ollama generate: {e}")
             raise
 
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """Send a chat completion request with optional tool definitions.
+
+        This method sends a chat completion request to Ollama's /api/chat endpoint
+        with support for tool calling. The LLM can request to call tools by
+        returning tool_calls in the response.
+
+        Args:
+            messages: List of message dicts in format [{"role": "user"|"assistant"|"system", "content": "text"}, ...]
+            tools: Optional list of tool definitions in OpenAI function format
+            stream: Whether to stream the response (default: False)
+
+        Returns:
+            Full response dict from Ollama API including:
+            - message: The assistant's message with content and optional tool_calls
+            - done: Boolean indicating if generation is complete
+            - model: The model name used
+            Other fields may be present depending on Ollama version
+
+        Raises:
+            aiohttp.ClientError: If there's a connection error
+            aiohttp.ServerTimeoutError: If the request times out
+            ValueError: If the API response is malformed or missing expected fields
+        """
+        url = f"{self.endpoint}/api/chat"
+
+        # Prepare request payload
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+        }
+
+        # Add tools if provided
+        if tools:
+            payload["tools"] = tools
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        try:
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=headers) as response:
+                response.raise_for_status()
+                data = await response.json()
+
+                # Validate response structure
+                if "message" not in data:
+                    raise ValueError("Response missing 'message' field")
+
+                message = data["message"]
+                if not isinstance(message, dict):
+                    raise ValueError("Response 'message' field is not a dict")
+
+                # Return full response including tool_calls if present
+                return data
+
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Ollama API connection error: {e}")
+            raise
+        except aiohttp.ServerTimeoutError as e:
+            self.logger.error(f"Ollama API timeout: {e}")
+            raise
+        except ValueError as e:
+            self.logger.error(f"Ollama API response parsing error: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error during Ollama chat: {e}")
+            raise
+
     async def health_check(self) -> bool:
         """Check if the Ollama service is available and responsive.
 

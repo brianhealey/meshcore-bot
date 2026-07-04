@@ -494,3 +494,283 @@ class TestGetSession:
 
         # Cleanup
         await session.close()
+
+
+# ---------------------------------------------------------------------------
+# TestChat
+# ---------------------------------------------------------------------------
+
+
+class TestChat:
+    """Test OllamaClient.chat() method for tool calling."""
+
+    async def test_chat_basic_success(self, ollama_client, mock_logger):
+        """Test successful chat() call without tools."""
+        # Mock response
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {"role": "assistant", "content": "Hello!"},
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            # Execute
+            messages = [{"role": "user", "content": "Hello"}]
+            result = await ollama_client.chat(messages)
+
+        # Assert
+        assert result["message"]["content"] == "Hello!"
+        assert result["done"] is True
+        assert result["model"] == "llama2"
+        mock_session.post.assert_called_once()
+
+    async def test_chat_with_tools(self, ollama_client):
+        """Test chat() with tool definitions."""
+        # Mock response with tool_calls
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"location": "San Francisco"},
+                            }
+                        }
+                    ],
+                },
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            # Execute with tools
+            messages = [{"role": "user", "content": "What's the weather?"}]
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather for a location",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"location": {"type": "string"}},
+                            "required": ["location"],
+                        },
+                    },
+                }
+            ]
+            result = await ollama_client.chat(messages, tools=tools)
+
+        # Assert
+        assert "tool_calls" in result["message"]
+        assert len(result["message"]["tool_calls"]) == 1
+        assert result["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+        assert result["message"]["tool_calls"][0]["function"]["arguments"]["location"] == "San Francisco"
+
+        # Verify tools were sent in payload
+        call_args = mock_session.post.call_args
+        payload = call_args.kwargs["json"]
+        assert "tools" in payload
+        assert payload["tools"] == tools
+
+    async def test_chat_without_tools(self, ollama_client):
+        """Test that tools parameter is optional."""
+        # Mock response
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {"role": "assistant", "content": "Response"},
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            # Execute without tools
+            messages = [{"role": "user", "content": "Hello"}]
+            result = await ollama_client.chat(messages)
+
+        # Assert
+        assert result["message"]["content"] == "Response"
+
+        # Verify tools were NOT sent in payload
+        call_args = mock_session.post.call_args
+        payload = call_args.kwargs["json"]
+        assert "tools" not in payload
+
+    async def test_chat_stream_parameter(self, ollama_client):
+        """Test that stream parameter is passed correctly."""
+        # Mock response
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {"role": "assistant", "content": "Streamed"},
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            # Execute with stream=True
+            messages = [{"role": "user", "content": "Hello"}]
+            await ollama_client.chat(messages, stream=True)
+
+        # Verify stream parameter was sent
+        call_args = mock_session.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["stream"] is True
+
+    async def test_chat_missing_message_field(self, ollama_client, mock_logger):
+        """Test that ValueError is raised when response is missing 'message' field."""
+        # Mock response without 'message' field
+        mock_resp = _make_mock_response(200, {"error": "Invalid request"})
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session and execute
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            with pytest.raises(ValueError, match="Response missing 'message' field"):
+                await ollama_client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert error was logged
+        assert mock_logger.error.called
+
+    async def test_chat_malformed_message_field(self, ollama_client, mock_logger):
+        """Test that ValueError is raised when 'message' field is not a dict."""
+        # Mock response with malformed message (not a dict)
+        mock_resp = _make_mock_response(200, {"message": "string instead of dict"})
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session and execute
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            with pytest.raises(ValueError, match="Response 'message' field is not a dict"):
+                await ollama_client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert error was logged
+        assert mock_logger.error.called
+
+    async def test_chat_client_error(self, ollama_client, mock_logger):
+        """Test that aiohttp.ClientError is raised and logged on connection error."""
+        # Mock session that raises ClientError
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(
+            side_effect=aiohttp.ClientError("Connection failed")
+        )
+
+        # Patch _get_session and execute
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            with pytest.raises(aiohttp.ClientError):
+                await ollama_client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert error was logged
+        assert mock_logger.error.called
+        assert "connection error" in mock_logger.error.call_args[0][0].lower()
+
+    async def test_chat_timeout_error(self, ollama_client, mock_logger):
+        """Test that ServerTimeoutError is raised and logged on timeout."""
+        # Mock session that raises ServerTimeoutError
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(
+            side_effect=aiohttp.ServerTimeoutError("Request timed out")
+        )
+
+        # Patch _get_session and execute
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            with pytest.raises(aiohttp.ServerTimeoutError):
+                await ollama_client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert error was logged
+        assert mock_logger.error.called
+        assert "connection error" in mock_logger.error.call_args[0][0].lower()
+
+    async def test_chat_includes_api_key_header(self, mock_logger):
+        """Test that API key is included in headers when provided."""
+        client = OllamaClient(
+            endpoint="http://localhost:11434",
+            model="llama2",
+            api_key="secret-key",
+            logger=mock_logger,
+        )
+
+        # Mock response
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {"role": "assistant", "content": "Authenticated"},
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(client, '_get_session', return_value=mock_session):
+            # Execute
+            await client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert - Authorization header should be present
+        call_args = mock_session.post.call_args
+        headers = call_args.kwargs["headers"]
+        assert "Authorization" in headers
+        assert headers["Authorization"] == "Bearer secret-key"
+
+    async def test_chat_uses_correct_endpoint(self, ollama_client):
+        """Test that chat() uses /api/chat endpoint."""
+        # Mock response
+        mock_resp = _make_mock_response(
+            200,
+            {
+                "message": {"role": "assistant", "content": "Test"},
+                "done": True,
+                "model": "llama2",
+            },
+        )
+
+        # Mock session
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_context_manager(mock_resp))
+
+        # Patch _get_session to return our mock
+        with patch.object(ollama_client, '_get_session', return_value=mock_session):
+            # Execute
+            await ollama_client.chat([{"role": "user", "content": "Test"}])
+
+        # Assert - correct endpoint was called
+        call_args = mock_session.post.call_args
+        assert call_args.args[0] == "http://localhost:11434/api/chat"
