@@ -233,3 +233,27 @@
 
 ---
 
+## 2026-07-04 - US-009
+- **What was implemented:**
+  - Added parameter metadata to WxCommand with required/type/enum fields
+  - location parameter is required (string type)
+  - forecast_type parameter is optional with enum values: current, tomorrow, 7d, hourly, alerts
+  - Changed parameter name from "option" to "forecast_type" for better LLM understanding
+  - Added 4 tests in TestWxCommandToolSchema class to verify parameter structure
+  - Added 4 tests in TestWxCommandToolExecution class to verify tool execution with various forecast types
+
+- **Files changed:**
+  - modules/commands/wx_command.py: Updated parameters list with required/type/enum metadata
+  - tests/test_tool_registry.py: Added TestWxCommandToolSchema class with 4 test cases
+  - tests/test_tool_executor.py: Added TestWxCommandToolExecution class with 4 test cases
+
+- **Learnings for future iterations:**
+  - Command parameters should include: name, description, required (bool), type (string/number), optional enum
+  - Parameter names should be descriptive for LLM understanding (forecast_type vs option)
+  - Enum values help LLM choose valid options instead of guessing
+  - Tests should verify both schema generation AND tool execution
+  - Mock command execution tests use async functions that set last_response attribute
+  - All 3045 tests pass, typecheck passes, lint passes, 44.53% coverage
+
+---
+
