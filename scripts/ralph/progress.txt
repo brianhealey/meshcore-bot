@@ -1,0 +1,95 @@
+# Ralph Progress Log
+
+Started: 2026-07-04
+Project: MeshCore Bot - LLM Integration via Ollama
+Branch: ralph/llm-integration
+
+## Codebase Patterns
+- Database migrations use sequential IDs (1, 2, 3...) not arbitrary numbers
+- Migration functions are named _mNNNN_description(cursor) where NNNN matches the function name
+- Migrations are appended to MIGRATIONS list as (ID, "description", function)
+- Use CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS for idempotency
+- Tests expect migration IDs to be contiguous (range(1, len(MIGRATIONS)+1))
+- Use tmp_path fixture for test databases (not :memory:)
+
+---
+
+## 2026-07-04 14:30 - US-001
+- Implemented database migration for LLM conversation context
+- Files changed:
+  - modules/db_migrations.py (added _m0042_llm_conversation_context function and migration entry)
+- **Learnings for future iterations:**
+  - Migration IDs must be sequential (used 13 instead of PRD's 42) to satisfy existing test expectations
+  - Migration functions follow pattern: _mNNNN_description(cursor)
+  - Always use CREATE TABLE IF NOT EXISTS for idempotency
+  - Index naming convention: idx_tablename_columns (e.g., idx_llm_context_key_timestamp)
+  - Tests in tests/test_db_migrations.py validate migration count and contiguity
+  - Make dev command sets up venv and installs all dependencies including test tools
+  - Quality checks: mypy (typecheck), ruff (lint), pytest (tests with 35% coverage threshold)
+---
+## 2026-07-04 - US-002
+- Implemented OllamaClient HTTP wrapper for Ollama API communication
+- Files changed:
+  - modules/ollama_client.py (new file - 174 lines)
+- **Learnings for future iterations:**
+  - HTTP clients in this codebase follow pattern from modules/clients/ (e.g., espn_client.py)
+  - Clients use aiohttp with async/await and session reuse via _get_session()
+  - Timeout configured as aiohttp.ClientTimeout(total=seconds)
+  - Error handling: catch aiohttp.ClientError, ServerTimeoutError, and ValueError for malformed responses
+  - Ollama API: POST to /api/chat with {"model": str, "messages": [{"role": str, "content": str}], "stream": false}
+  - Ollama response format: {"message": {"role": "assistant", "content": "text"}}
+  - Health check uses GET /api/tags endpoint
+  - Added close() method for proper session cleanup (not in PRD but good practice)
+  - Google-style docstrings are required (Args:, Returns:, Raises: sections)
+  - mypy passes with no special config needed for new modules following type hints
+  - All existing tests must continue to pass (2861 tests in this project)
+---
+## 2026-07-04 - US-003
+- Implemented LLMContextManager for conversation history management
+- Files changed:
+  - modules/llm_context_manager.py (new file - 241 lines)
+- **Learnings for future iterations:**
+  - LLMContextManager uses AsyncDBManager for async DB operations
+  - Context retrieval fetches most recent messages ordered DESC, then reverses to chronological order
+  - Pruning uses two-step approach: first delete by TTL, then keep only max_exchanges * 2 messages
+  - Static method format_context_for_ollama() converts DB format to Ollama API format
+  - OllamaClient expects context as [{"role": "user"|"assistant", "content": "text"}, ...]
+  - Database records include: id, context_key, role, content, timestamp, created_at
+  - Error handling: get_context returns empty list on error, add_message/clear_context return bool
+  - Pruning errors are logged but don't fail (using try/except without raising)
+  - All async DB operations use `async with self.async_db.connection() as conn:` pattern
+  - Commit operations require `await conn.commit()` after execute
+---
+## 2026-07-04 - US-004
+- Implemented chunk_llm_response() utility function for splitting LLM responses
+- Files changed:
+  - modules/utils.py (added chunk_llm_response function - 150 lines)
+- **Learnings for future iterations:**
+  - Utility functions in modules/utils.py follow Google-style docstrings with Examples section
+  - LoRa message length constraints: default max_chunk_length=180 bytes
+  - Sentence splitting uses regex pattern r'([.!?])\s+' to preserve punctuation
+  - Word splitting fallback prevents mid-word breaks when sentences too long
+  - Chunk indicators format: "[1/N] content" where N is total chunks
+  - Truncation suffix: "...(truncated)" added to last chunk if exceeds max_parts
+  - Must account for indicator length when calculating available content space
+  - Edge cases: empty strings, very long words, single-sentence responses
+  - modules/utils.py is 2447 lines - large file requiring offset/limit when reading
+  - Quality check workflow: mypy → ruff → pytest (all must pass before commit)
+---
+## 2026-07-04 - US-005
+- Added [LLM_Command] configuration section to config.ini.example
+- Files changed:
+  - config.ini.example (added 58-line [LLM_Command] section)
+- **Learnings for future iterations:**
+  - Command configuration sections follow pattern: [CommandName_Command] (e.g., [LLM_Command], [Ping_Command])
+  - Config sections placed after command stubs, before Web Viewer section
+  - Comment style: clear descriptions with examples and defaults
+  - Boolean settings: enabled = true/false
+  - String settings with URLs: include protocol (http://localhost:11434)
+  - Integer settings: include units in comment (seconds, characters)
+  - Settings include default values in comments (e.g., "Default: 180")
+  - Multi-line comments explain purpose, constraints, and recommendations
+  - Optional channel restrictions and aliases follow same pattern as other commands
+  - Configuration documentation is part of the feature (not separate docs)
+  - All 2861 tests passed - config changes don't affect tests unless code reads them
+---

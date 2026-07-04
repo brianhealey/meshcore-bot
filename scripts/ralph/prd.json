@@ -1,0 +1,284 @@
+{
+  "project": "MeshCore Bot",
+  "branchName": "ralph/llm-integration",
+  "description": "LLM Integration - Add conversational AI capabilities via Ollama with intelligent response chunking for LoRa mesh constraints",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add database migration for LLM conversation context",
+      "description": "As a developer, I need a database table to store conversation history for context management.",
+      "acceptanceCriteria": [
+        "Create migration _m0042_llm_conversation_context in modules/db_migrations.py",
+        "Table has columns: id, context_key, role, content, timestamp, created_at",
+        "Create index on (context_key, timestamp DESC)",
+        "Append migration to MIGRATIONS list with ID 42",
+        "Migration runs successfully when bot starts",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Used migration ID 13 instead of 42 to maintain sequential ID pattern required by existing tests"
+    },
+    {
+      "id": "US-002",
+      "title": "Create OllamaClient HTTP wrapper",
+      "description": "As a developer, I need a client to communicate with Ollama API.",
+      "acceptanceCriteria": [
+        "Create modules/ollama_client.py with OllamaClient class",
+        "Implement __init__(endpoint, model, api_key, timeout)",
+        "Implement async generate(prompt, context, system_prompt) method",
+        "Implement async health_check() method",
+        "Handle connection errors, timeouts, and malformed responses gracefully",
+        "Use aiohttp for async HTTP requests",
+        "Add comprehensive docstrings",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented OllamaClient with async HTTP methods, comprehensive error handling, Google-style docstrings. Added close() method for session cleanup."
+    },
+    {
+      "id": "US-003",
+      "title": "Implement LLMContextManager for conversation history",
+      "description": "As a developer, I need to manage conversation context stored in the database.",
+      "acceptanceCriteria": [
+        "Create modules/llm_context_manager.py with LLMContextManager class",
+        "Implement async get_context(context_key, max_exchanges) - retrieve recent history",
+        "Implement async add_message(context_key, role, content) - save new message",
+        "Implement async prune_context(context_key, max_exchanges, ttl_seconds) - cleanup old entries",
+        "Implement async clear_context(context_key) - delete all for key",
+        "Implement format_context_for_ollama(context) - convert DB records to Ollama format",
+        "Add comprehensive docstrings",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Implemented LLMContextManager with all required methods. Uses AsyncDBManager for async DB operations. Includes comprehensive Google-style docstrings and proper error handling."
+    },
+    {
+      "id": "US-004",
+      "title": "Add response chunking utility function",
+      "description": "As a developer, I need to split long LLM responses into LoRa-compatible chunks.",
+      "acceptanceCriteria": [
+        "Add chunk_llm_response() function to modules/utils.py",
+        "Split at sentence boundaries (. ! ?) when possible",
+        "Fallback to word boundaries if sentences too long",
+        "Add chunk indicators [1/3], [2/3], [3/3] if multi-part",
+        "Truncate with suffix '...(truncated)' if exceeds max_parts",
+        "Default max_chunk_length=180, max_parts=5",
+        "Add comprehensive docstrings",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Implemented chunk_llm_response() with sentence/word boundary splitting, chunk indicators, and truncation support. All quality checks pass."
+    },
+    {
+      "id": "US-005",
+      "title": "Create LLM configuration section",
+      "description": "As a user, I need to configure LLM settings in config.ini.",
+      "acceptanceCriteria": [
+        "Add [LLM_Command] section to config.ini.example",
+        "Include all settings: enabled, ollama_endpoint, ollama_model, ollama_timeout_seconds",
+        "Include context settings: context_max_exchanges, context_ttl_seconds",
+        "Include chunking settings: max_chunk_length, max_response_parts, chunk_delay_seconds",
+        "Include system_prompt with LoRa-optimized default",
+        "Add comments explaining each setting",
+        "Settings follow existing config patterns",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Added comprehensive [LLM_Command] configuration section with all required settings, detailed comments, and LoRa-optimized defaults. Follows existing config patterns (command stub format, comment style)."
+    },
+    {
+      "id": "US-006",
+      "title": "Implement LLMCommand basic structure",
+      "description": "As a developer, I need the LLMCommand plugin skeleton with configuration loading.",
+      "acceptanceCriteria": [
+        "Create modules/commands/llm_command.py",
+        "Inherit from BaseCommand",
+        "Set name='ask', keywords=['ask'], description, category='ai'",
+        "Set requires_internet=True",
+        "Load all config values from [LLM_Command] section in __init__",
+        "Implement can_execute() checking enabled flag",
+        "Implement get_help_text() returning usage info",
+        "Add comprehensive docstrings",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Implement LLMCommand execute method with context",
+      "description": "As a user, I want to ask the bot questions via !ask command.",
+      "acceptanceCriteria": [
+        "Implement async execute(message) in LLMCommand",
+        "Extract question from message.content (strip command keyword)",
+        "Build context_key from message (channel name or user pubkey/ID)",
+        "Load conversation context using LLMContextManager",
+        "Query Ollama using OllamaClient with context and system prompt",
+        "Handle Ollama errors gracefully with user-friendly messages",
+        "Save user question and bot response to context",
+        "Return True on success, False on failure",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Implement LLM response chunking and delivery",
+      "description": "As a user, I want long LLM responses split into multiple messages that fit LoRa constraints.",
+      "acceptanceCriteria": [
+        "In LLMCommand.execute(), chunk the Ollama response using chunk_llm_response()",
+        "If single chunk, send via send_response()",
+        "If multiple chunks, send via send_response_chunked() with configured delay",
+        "Each chunk respects configured max_chunk_length",
+        "Truncation happens if response would create >max_response_parts chunks",
+        "User sees chunk indicators [1/N] for multi-part responses",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add context pruning after each LLM response",
+      "description": "As a developer, I need old context automatically removed to prevent unbounded DB growth.",
+      "acceptanceCriteria": [
+        "In LLMCommand.execute(), after saving response call prune_context()",
+        "Pass context_max_exchanges and context_ttl_seconds from config",
+        "Pruning removes entries older than TTL",
+        "Pruning keeps only max_exchanges most recent pairs",
+        "Pruning errors are logged but don't fail the command",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Implement clear-context command",
+      "description": "As a user, I want to clear my conversation history.",
+      "acceptanceCriteria": [
+        "Add 'clear-context' to LLMCommand.keywords",
+        "In execute(), detect if message is clear-context request",
+        "If clear-context, call context_manager.clear_context(context_key)",
+        "Send confirmation message: 'Conversation context cleared.'",
+        "Handle errors gracefully",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add unit tests for OllamaClient",
+      "description": "As a developer, I need tests for the Ollama HTTP client.",
+      "acceptanceCriteria": [
+        "Create tests/test_ollama_client.py",
+        "Test successful generate() with mocked aiohttp response",
+        "Test health_check() success and failure",
+        "Test timeout handling",
+        "Test malformed JSON response handling",
+        "Test connection error handling",
+        "Use pytest fixtures for mock responses",
+        "All tests pass",
+        "Coverage >80% for ollama_client.py"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Add unit tests for LLMContextManager",
+      "description": "As a developer, I need tests for context CRUD operations.",
+      "acceptanceCriteria": [
+        "Create tests/test_llm_context_manager.py",
+        "Test get_context() with empty and populated history",
+        "Test add_message() creates correct DB entry",
+        "Test prune_context() removes old entries based on TTL",
+        "Test prune_context() keeps only max_exchanges",
+        "Test clear_context() deletes all entries for key",
+        "Test format_context_for_ollama() conversion",
+        "Use tmp_path fixture for test database",
+        "All tests pass",
+        "Coverage >80% for llm_context_manager.py"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add unit tests for response chunking",
+      "description": "As a developer, I need tests for the chunking utility.",
+      "acceptanceCriteria": [
+        "Add test_chunk_llm_response to tests/test_utils.py",
+        "Test short response (single chunk, no indicators)",
+        "Test long response split at sentence boundaries",
+        "Test response with no sentence boundaries (word split)",
+        "Test truncation when exceeds max_parts",
+        "Test chunk indicators [1/3], [2/3], [3/3] are correct",
+        "Test edge cases: empty string, very long words",
+        "All tests pass",
+        "Coverage >80% for chunk_llm_response function"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Add integration test for LLMCommand end-to-end",
+      "description": "As a developer, I need an integration test with mocked Ollama.",
+      "acceptanceCriteria": [
+        "Create tests/test_llm_command.py",
+        "Test !ask command with mocked OllamaClient",
+        "Test multi-turn conversation maintains context",
+        "Test !clear-context resets history",
+        "Test chunked response delivery",
+        "Test Ollama error handling returns user-friendly message",
+        "Test context pruning after response",
+        "Use command_mock_bot_with_db fixture",
+        "All tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Add LLM commands to documentation",
+      "description": "As a user, I want documentation for the new LLM features.",
+      "acceptanceCriteria": [
+        "Create docs/llm-integration.md with installation, configuration, usage sections",
+        "Include Ollama setup instructions (install, pull model, serve)",
+        "Document all [LLM_Command] config options",
+        "Provide usage examples for !ask and !clear-context",
+        "Add FAQ section with common issues",
+        "Add LLM commands to docs/command-reference.md",
+        "Update README.md to mention LLM integration in features list"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
