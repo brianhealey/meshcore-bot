@@ -153,3 +153,17 @@ Branch: ralph/llm-integration
   - All 2875 tests continue to pass - no test changes needed for this feature
   - Pattern: Operations that cleanup/optimize should not block critical functionality (send response)
 ---
+## 2026-07-04 - US-010
+- Implemented clear-context command for clearing conversation history
+- Files changed:
+  - modules/commands/llm_command.py (added clear-context detection and handling)
+- **Learnings for future iterations:**
+  - Keywords list already included 'clear-context' from US-006, but execute() didn't implement it yet
+  - Command routing pattern: check request type early in execute(), handle each type separately
+  - Helper method _is_clear_context_request() follows same pattern as _extract_question() - strips prefix and checks content
+  - Clear-context handling placed before question extraction to short-circuit early
+  - Error handling pattern: try/except around manager call, send user-friendly message on error
+  - Success/failure communicated via both return value (bool) and user message
+  - Context clearing is per-channel or per-user based on context_key (same as conversation context)
+  - All 2861 tests pass - no test changes needed for this feature yet (US-014 will add integration tests)
+---
