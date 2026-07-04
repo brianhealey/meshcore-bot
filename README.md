@@ -16,6 +16,7 @@ A Python bot that connects to MeshCore mesh networks via serial port, BLE, or TC
 - **Keyword Responses**: Configurable keyword-response pairs with template variables
 - **Command System**: Plugin-based command architecture with built-in commands
 - **Command Aliases**: Define shorthand aliases for any command via `aliases =` key in each command's config section
+- **LLM Integration**: Conversational AI via Ollama with intelligent response chunking for LoRa constraints ([docs](docs/llm-integration.md))
 - **Rate Limiting**: Global, per-user (by pubkey or name), and per-channel rate limits to prevent spam
 - **User Management**: Ban/unban users with persistent storage
 - **Scheduled Messages**: Send messages at configured times

@@ -9,6 +9,7 @@ This document provides a comprehensive list of all available commands in the Mes
 - [Emergency Commands](#emergency-commands)
 - [Gaming Commands](#gaming-commands)
 - [Entertainment Commands](#entertainment-commands)
+- [AI Commands](#ai-commands)
 - [Sports Commands](#sports-commands)
 - [MeshCore Utility Commands](#meshcore-utility-commands)
 - [Admin Commands](#admin-commands)
@@ -660,6 +661,41 @@ prefix.fortune = 🥠
 - `category.<key>` — Website command-reference category
 
 There is no separate built-in `fortune` command — use RandomLine with a fortunes file.
+
+---
+
+## AI Commands
+
+### `ask`
+
+Ask questions to the bot's AI assistant powered by Ollama. Supports multi-turn conversations with context memory.
+
+**Usage:**
+- `ask <question>` - Ask the AI a question
+- `clear-context` - Clear your conversation history
+
+**Examples:**
+```
+ask What is the weather like today?
+ask Tell me a joke
+ask What is the capital of France?
+ask What is its population?
+clear-context
+```
+
+**Response:** Natural language responses from the AI assistant. Long responses are automatically chunked for LoRa compatibility with indicators like `[1/3]`, `[2/3]`, `[3/3]`.
+
+**Features:**
+- Multi-turn conversations (remembers previous exchanges)
+- Per-channel and per-user context isolation
+- Automatic response chunking for LoRa mesh constraints
+- Context pruning (old conversations auto-deleted after 1 hour by default)
+
+**Configuration:** `[LLM_Command]` — `enabled`, `ollama_endpoint`, `ollama_model`, `context_max_exchanges`, `max_chunk_length`, `max_response_parts`, `system_prompt`
+
+**Documentation:** See [docs/llm-integration.md](llm-integration.md) for setup instructions, configuration details, and troubleshooting.
+
+**Note:** Requires [Ollama](https://ollama.com/) to be installed and running. Disabled by default.
 
 ---
 
