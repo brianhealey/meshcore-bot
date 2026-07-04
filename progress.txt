@@ -310,3 +310,27 @@
 
 ---
 
+## 2026-07-04 - US-012
+- **What was implemented:**
+  - Added parameter metadata to PathCommand with required destination parameter (string type)
+  - destination parameter accepts node ID or hex path data (e.g., '01,5f' or 'A1B2')
+  - Added 4 schema generation tests in TestPathCommandToolSchema class
+  - Added 4 tool execution tests in TestPathCommandToolExecution class
+  - All tests verify parameter structure, schema generation, and command execution
+
+- **Files changed:**
+  - modules/commands/path_command.py: Added parameters list with destination parameter
+  - tests/test_tool_registry.py: Added TestPathCommandToolSchema class with 4 test cases
+  - tests/test_tool_executor.py: Added TestPathCommandToolExecution class with 4 test cases
+
+- **Learnings for future iterations:**
+  - path_command accepts hex path data (comma-separated like '01,5F,A1') or destination node IDs
+  - destination is required parameter since path analysis needs a target
+  - PathCommand.execute() extracts everything after first word as path_input (line 266)
+  - Test pattern: verify parameter metadata → schema generation → tool execution with mock responses
+  - All 3083 tests pass, typecheck passes, lint passes, 44.53% coverage
+  - path_command is large (933 lines) due to complex geographic and graph-based path inference
+  - Schema description should emphasize "showing repeaters and signal quality" for LLM context
+
+---
+
