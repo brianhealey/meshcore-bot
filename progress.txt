@@ -334,3 +334,33 @@
 
 ---
 
+## 2026-07-04 - US-013
+- **What was implemented:**
+  - Created comprehensive integration test file tests/test_llm_tool_calling.py
+  - Added 8 end-to-end integration tests covering complete tool calling workflow
+  - Test: Weather query triggers wx_command tool call with LLM function calling
+  - Test: Airplane query triggers airplanes_command tool call
+  - Test: Multi-tool query calls both wx and satpass tools sequentially
+  - Test: Invalid tool call rejected gracefully with error handling
+  - Test: Tool timeout handled with error message to LLM
+  - Test: User mention prefix added to responses ([@username] format)
+  - Test: User mention skipped for DM responses
+  - Test: Command context storage verified for tool-called commands
+
+- **Files changed:**
+  - tests/test_llm_tool_calling.py: New integration test file (615 lines, 8 test cases)
+
+- **Learnings for future iterations:**
+  - Integration tests should use fixtures from conftest.py (async_db_manager, mock_logger)
+  - Mock bot fixture needs complete config with all LLM_Command settings (enable_tools, available_tools, etc.)
+  - Tool calling flow: chat() → tool_calls → execute_tool() → chat() → final response
+  - Mock chat responses as list of dicts with message.tool_calls and message.content
+  - User mention format is "[@username] " prefix, skipped for DMs
+  - Tool execution errors should still allow test to pass (graceful degradation)
+  - Integration tests verify end-to-end workflow, not just individual components
+  - All 3077 tests pass (including 8 new integration tests), typecheck passes, 44.53% coverage
+  - Test organization: one fixture per mock command, one test class for all integration tests
+  - Mock commands need: name, keywords, description, parameters list, execute() AsyncMock, last_response
+
+---
+
