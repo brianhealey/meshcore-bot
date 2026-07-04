@@ -127,3 +127,17 @@ Branch: ralph/llm-integration
   - All quality checks passed (mypy, ruff, 2875 tests all passing)
   - Response chunking and context pruning are deferred to US-008 and US-009
 ---
+## 2026-07-04 - US-008
+- Implemented LLM response chunking and delivery
+- Files changed:
+  - modules/commands/llm_command.py (added chunking logic to execute method)
+- **Learnings for future iterations:**
+  - chunk_llm_response() from modules/utils.py handles all chunking logic (sentence/word boundaries, indicators)
+  - Single-chunk responses use send_response() for direct sending
+  - Multi-chunk responses use send_response_chunked() which has built-in rate limiting
+  - send_response_chunked() automatically adds delays between chunks based on bot_tx_rate_limit_seconds
+  - The chunk_delay_seconds config setting is available but send_response_chunked has its own timing logic
+  - Chunk indicators [1/N], [2/N] are automatically added by chunk_llm_response()
+  - Truncation with "...(truncated)" suffix happens when response exceeds max_response_parts
+  - All 2875 tests pass - no test changes needed for this feature
+---
