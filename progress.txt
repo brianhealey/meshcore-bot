@@ -93,3 +93,32 @@
   - Both command context and regular LLM messages can coexist in same context_key
 
 ---
+## 2026-07-04 - US-004
+- **What was implemented:**
+  - Added command context capture hook in CommandManager.execute_commands
+  - Hook triggers after successful command execution (after web viewer integration block)
+  - Checks if track_all_commands is enabled via LLM command instance
+  - Extracts context_key using same logic as LLMCommand (channel name or sender pubkey)
+  - Calls LLMContextManager.add_command_context() with command name, user input, bot response, and sender name
+  - Skips !ask and !clear-context commands (already handled by LLMCommand)
+  - Only captures context when response was sent and command succeeded
+  - Handles errors gracefully with debug logging
+  - Added 11 comprehensive tests covering all context capture scenarios
+
+- **Files changed:**
+  - modules/command_manager.py: Added context capture hook after line 1841
+  - tests/test_command_context_capture.py: New test file with 11 test cases
+
+- **Learnings for future iterations:**
+  - Command execution flow: execute_commands() → command.execute() → check response → stats → web viewer → context capture
+  - Context capture happens AFTER web viewer integration to ensure response is fully tracked
+  - Access LLM command via self.commands.get('ask') to check track_all_commands flag
+  - Mock commands need: is_channel_allowed, should_execute, get_response_format, cooldown_seconds
+  - Mock commands must return None from get_response_format() to be treated as self-handling
+  - CommandManager accesses command response via command.last_response or self._last_response
+  - Context capture is opt-in via track_all_commands config (default: true)
+  - Context capture failures are logged but don't break command execution (graceful degradation)
+  - All 2981 tests pass, typecheck passes, lint passes
+
+---
+

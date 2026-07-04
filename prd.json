@@ -66,8 +66,8 @@
         "Tests pass for context capture flow"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed - hook added in CommandManager, 11 tests pass, all tests pass (2981 total)"
     },
     {
       "id": "US-005",
