@@ -4,7 +4,11 @@ LLM command for the MeshCore Bot
 Provides conversational AI capabilities via Ollama with LoRa-optimized response chunking
 """
 
+from typing import Optional
+
+from ..llm_context_manager import LLMContextManager
 from ..models import MeshMessage
+from ..ollama_client import OllamaClient
 from .base_command import BaseCommand
 
 
@@ -108,6 +112,20 @@ class LLMCommand(BaseCommand):
             value_type='str'
         )
 
+        # Initialize OllamaClient
+        self.ollama_client = OllamaClient(
+            endpoint=self.ollama_endpoint,
+            model=self.ollama_model,
+            timeout=self.ollama_timeout_seconds,
+            logger=self.logger,
+        )
+
+        # Initialize LLMContextManager
+        self.context_manager = LLMContextManager(
+            async_db=bot.async_db_manager,
+            logger=self.logger,
+        )
+
     def can_execute(self, message: MeshMessage, skip_channel_check: bool = False) -> bool:
         """Check if this command can be executed with the given message.
 
@@ -139,11 +157,11 @@ class LLMCommand(BaseCommand):
         )
 
     async def execute(self, message: MeshMessage) -> bool:
-        """Execute the LLM command (placeholder for future implementation).
+        """Execute the LLM command.
 
-        This is a skeleton implementation for US-006. Full execution logic
-        (context loading, Ollama querying, response chunking) will be
-        implemented in subsequent user stories (US-007, US-008, US-009, US-010).
+        Handles two types of requests:
+        1. !ask <question> - Query the LLM with context
+        2. !clear-context - Clear conversation history
 
         Args:
             message: The message that triggered the command.
@@ -151,8 +169,113 @@ class LLMCommand(BaseCommand):
         Returns:
             bool: True if execution was successful, False otherwise.
         """
-        # TODO: US-007 - Implement full execute() method with context and Ollama integration
-        # TODO: US-008 - Add response chunking logic
-        # TODO: US-009 - Add context pruning
-        # TODO: US-010 - Implement clear-context command handling
-        return False
+        # Extract the question from the message content
+        question = self._extract_question(message.content)
+
+        if not question:
+            await self.send_response(
+                message,
+                "Usage: !ask <question> or !clear-context"
+            )
+            return False
+
+        # Build context key from message (channel name or user identifier)
+        context_key = self._build_context_key(message)
+
+        try:
+            # Load conversation context
+            context_records = await self.context_manager.get_context(
+                context_key=context_key,
+                max_exchanges=self.context_max_exchanges,
+            )
+
+            # Convert context to Ollama format
+            context = LLMContextManager.format_context_for_ollama(context_records)
+
+            # Query Ollama
+            try:
+                response = await self.ollama_client.generate(
+                    prompt=question,
+                    context=context,
+                    system_prompt=self.system_prompt,
+                )
+            except Exception as e:
+                self.logger.error(f"Ollama generation error: {e}")
+                await self.send_response(
+                    message,
+                    "Sorry, I'm having trouble connecting to the AI service. Please try again later."
+                )
+                return False
+
+            # Save user question and bot response to context
+            await self.context_manager.add_message(
+                context_key=context_key,
+                role="user",
+                content=question,
+            )
+            await self.context_manager.add_message(
+                context_key=context_key,
+                role="assistant",
+                content=response,
+            )
+
+            # TODO: US-008 - Add response chunking logic
+            # TODO: US-009 - Add context pruning after response
+            # For now, send response directly
+            await self.send_response(message, response)
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"LLM command execution error: {e}")
+            await self.send_response(
+                message,
+                "Sorry, an error occurred while processing your request."
+            )
+            return False
+
+    def _extract_question(self, content: str) -> Optional[str]:
+        """Extract the question from the message content.
+
+        Strips the command keyword (ask, clear-context, etc.) and returns the remaining text.
+
+        Args:
+            content: The message content (e.g., "!ask What is the weather?")
+
+        Returns:
+            The question text, or None if no question provided.
+        """
+        # Strip leading/trailing whitespace
+        content = content.strip()
+
+        # Remove command prefix (! or other configured prefix)
+        if content.startswith('!'):
+            content = content[1:].strip()
+
+        # Find which keyword was used and strip it
+        for keyword in self.keywords:
+            if content.lower().startswith(keyword.lower()):
+                # Strip the keyword and any following whitespace
+                question = content[len(keyword):].strip()
+                return question if question else None
+
+        return None
+
+    def _build_context_key(self, message: MeshMessage) -> str:
+        """Build a context key to identify the conversation.
+
+        For channel messages, use the channel name.
+        For DMs, use the sender's pubkey or ID.
+
+        Args:
+            message: The message containing sender/channel info
+
+        Returns:
+            A unique context key string
+        """
+        if message.is_dm:
+            # Use pubkey if available, otherwise fall back to sender_id
+            return message.sender_pubkey or message.sender_id or "unknown"
+        else:
+            # Use channel name for channel messages
+            return message.channel or "default"
