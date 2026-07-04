@@ -490,7 +490,7 @@ def _m0012_purging_log_details_column(cursor: sqlite3.Cursor) -> None:
         _add_column(cursor, "purging_log", "details", "TEXT")
 
 
-def _m0042_llm_conversation_context(cursor: sqlite3.Cursor) -> None:
+def _m0013_llm_conversation_context(cursor: sqlite3.Cursor) -> None:
     """Create llm_conversation_context table for storing LLM conversation history."""
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS llm_conversation_context (
@@ -506,6 +506,12 @@ def _m0042_llm_conversation_context(cursor: sqlite3.Cursor) -> None:
         "CREATE INDEX IF NOT EXISTS idx_llm_context_key_timestamp "
         "ON llm_conversation_context(context_key, timestamp DESC)"
     )
+
+
+def _m0014_extend_llm_context_for_commands(cursor: sqlite3.Cursor) -> None:
+    """Add command_name and sender_name columns to support tracking all command interactions."""
+    _add_column(cursor, "llm_conversation_context", "command_name", "TEXT")
+    _add_column(cursor, "llm_conversation_context", "sender_name", "TEXT")
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +533,8 @@ MIGRATIONS: list[MigrationEntry] = [
     (10, "create repeater/graph tables", _m0010_create_repeater_and_graph_tables),
     (11, "repeater/graph indexes", _m0011_repeater_and_graph_indexes),
     (12, "purging_log: add details column", _m0012_purging_log_details_column),
-    (13, "llm_conversation_context table", _m0042_llm_conversation_context),
+    (13, "llm_conversation_context table", _m0013_llm_conversation_context),
+    (14, "llm_conversation_context: command_name, sender_name", _m0014_extend_llm_context_for_commands),
 ]
 
 

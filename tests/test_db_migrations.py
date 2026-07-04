@@ -323,3 +323,13 @@ class TestSchema:
 
         cursor = conn.cursor()
         assert _column_exists(cursor, "purging_log", "details") is True
+
+    def test_llm_conversation_context_has_command_name(self, runner, conn):
+        runner.run()
+        cursor = conn.cursor()
+        assert _column_exists(cursor, "llm_conversation_context", "command_name") is True
+
+    def test_llm_conversation_context_has_sender_name(self, runner, conn):
+        runner.run()
+        cursor = conn.cursor()
+        assert _column_exists(cursor, "llm_conversation_context", "sender_name") is True
