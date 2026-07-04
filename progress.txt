@@ -147,3 +147,31 @@
 
 ---
 
+## 2026-07-04 - US-006
+- **What was implemented:**
+  - Created ToolRegistry class for discovering and converting bot commands into LLM tool schemas
+  - Implemented get_available_commands() to filter commands by whitelist from config
+  - Implemented generate_tool_schema() to convert command metadata to OpenAI function format
+  - Implemented get_all_tool_schemas() to return all available tool schemas
+  - Reads available_tools from [LLM_Command] config section (comma-separated list)
+  - Added 16 comprehensive tests covering all ToolRegistry functionality
+  - Updated config.ini.example with available_tools setting and documentation
+
+- **Files changed:**
+  - modules/tool_registry.py: New module with ToolRegistry class (119 lines)
+  - tests/test_tool_registry.py: New test file with 16 test cases
+  - config.ini.example: Added available_tools setting with documentation
+
+- **Learnings for future iterations:**
+  - Commands expose metadata via class attributes: name, description, short_description, parameters
+  - Parameters list contains dicts with: name, description, required, type, optional enum
+  - OpenAI function schema format: type=function, function={name, description, parameters}
+  - Parameters object has: type=object, properties={}, required=[] array
+  - short_description is preferred over description for tool schemas (more concise)
+  - Config whitelist pattern: comma-separated string → split → strip → set comprehension
+  - ToolRegistry bridges command system and LLM tool calling by converting metadata to schemas
+  - Default whitelist: wx,airplanes,satpass,path,stats,moon,sun,aurora
+  - All 3021 tests pass, typecheck passes, lint passes
+
+---
+
