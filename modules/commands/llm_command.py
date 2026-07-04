@@ -9,6 +9,7 @@ from typing import Optional
 from ..llm_context_manager import LLMContextManager
 from ..models import MeshMessage
 from ..ollama_client import OllamaClient
+from ..utils import chunk_llm_response
 from .base_command import BaseCommand
 
 
@@ -219,10 +220,22 @@ class LLMCommand(BaseCommand):
                 content=response,
             )
 
-            # TODO: US-008 - Add response chunking logic
+            # Chunk the response for LoRa compatibility
+            chunks = chunk_llm_response(
+                text=response,
+                max_chunk_length=self.max_chunk_length,
+                max_parts=self.max_response_parts,
+            )
+
+            # Send response (single or multi-part)
+            if len(chunks) == 1:
+                # Single chunk - send directly
+                await self.send_response(message, chunks[0])
+            else:
+                # Multiple chunks - send with chunked method
+                await self.send_response_chunked(message, chunks)
+
             # TODO: US-009 - Add context pruning after response
-            # For now, send response directly
-            await self.send_response(message, response)
 
             return True
 
