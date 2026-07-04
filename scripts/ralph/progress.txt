@@ -205,3 +205,22 @@ Branch: ralph/llm-integration
   - Error handling tests: Set manager.async_db = None to force errors and verify error logging
 ---
 
+## 2026-07-04 - US-013
+- Implemented comprehensive unit tests for chunk_llm_response utility function
+- Files changed:
+  - tests/test_utils.py (added TestChunkLLMResponse class with 21 tests, added chunk_llm_response import)
+  - tests/integration/test_rf_scope_correlation.py (ruff auto-fixed import ordering)
+  - scripts/ralph/prd.json (updated US-013 passes: true)
+- **Learnings for future iterations:**
+  - Test organization: tests/test_utils.py uses class-based organization (class TestFunctionName:)
+  - Import additions must maintain alphabetical ordering to pass ruff linting
+  - chunk_llm_response behavior: truncation suffix added BEFORE chunk indicators, so may be truncated itself
+  - Testing truncation: check for partial suffix like "trun" not just full "...(truncated)" due to line 2592-2593
+  - Implementation detail: Chunk indicators are added after truncation, and content is further truncated to fit
+  - Test coverage achieved: 21 comprehensive tests covering all acceptance criteria
+  - Edge cases tested: empty strings, very long words, whitespace-only, mixed terminators, real-world responses
+  - Full test suite: 2937 tests passing with 43.88% total coverage (exceeds 35% threshold)
+  - Quality check pattern: mypy → ruff (with --fix if needed) → pytest (full suite without coverage for speed)
+  - Ruff auto-fix can modify other files - always review git status after running --fix
+---
+
