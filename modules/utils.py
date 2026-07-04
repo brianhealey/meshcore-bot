@@ -2590,7 +2590,14 @@ def chunk_llm_response(
             # Ensure chunk + indicator doesn't exceed max_chunk_length
             available_for_content = max_chunk_length - len(indicator)
             if len(chunk) > available_for_content:
-                chunk = chunk[:available_for_content]
+                # Smart truncate at word boundary to avoid mid-word cuts
+                truncated = chunk[:available_for_content]
+                # Find last space to cut at word boundary
+                last_space = truncated.rfind(' ')
+                if last_space > available_for_content * 0.7:  # Keep at least 70%
+                    chunk = truncated[:last_space]
+                else:
+                    chunk = truncated
             final_chunks.append(indicator + chunk)
         return final_chunks
 
