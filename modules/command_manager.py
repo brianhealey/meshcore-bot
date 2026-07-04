@@ -1840,6 +1840,40 @@ class CommandManager:
                         except Exception as e:
                             self.logger.debug(f"Failed to capture command data for web viewer: {e}")
 
+                    # Capture command context for LLM if enabled
+                    if response_sent and response and success:
+                        try:
+                            # Get LLM command if available
+                            llm_command = self.commands.get('ask')
+                            if (llm_command and
+                                hasattr(llm_command, 'track_all_commands') and
+                                llm_command.track_all_commands and
+                                hasattr(llm_command, 'context_manager')):
+                                # Skip !ask and !clear-context commands (already handled by LLMCommand)
+                                if command_name not in ['ask', 'clear-context']:
+                                    # Build context key using same logic as LLMCommand
+                                    if message.is_dm:
+                                        context_key = message.sender_pubkey or message.sender_id or "unknown"
+                                    else:
+                                        context_key = message.channel or "default"
+
+                                    # Extract sender name for user mentions
+                                    sender_name = message.sender_id or None
+
+                                    # Store command context
+                                    await llm_command.context_manager.add_command_context(
+                                        context_key=context_key,
+                                        command_name=command_name,
+                                        user_input=message.content,
+                                        bot_response=response,
+                                        sender_name=sender_name,
+                                    )
+                                    self.logger.debug(
+                                        f"Captured command context: {command_name} for key '{context_key}'"
+                                    )
+                        except Exception as e:
+                            self.logger.debug(f"Failed to capture command context: {e}")
+
                 except Exception as e:
                     self.logger.error(f"Error executing command '{command_name}': {e}")
                     # Send error message to user
