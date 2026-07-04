@@ -63,3 +63,33 @@
   - Config defaults should favor user-friendly features (default: true for mentions)
 
 ---
+
+## 2026-07-04 - US-003
+- **What was implemented:**
+  - Extended LLMContextManager to support command context tracking
+  - Added add_command_context() method to store command name, user input, bot response, and sender name
+  - Updated get_context() to return command_name and sender_name fields
+  - Updated format_context_for_ollama() documentation to reflect command context support
+  - Added track_all_commands config option (default: true) to LLMCommand.__init__
+  - Updated config.ini.example with comprehensive documentation
+  - Added 7 comprehensive tests covering all new functionality
+
+- **Files changed:**
+  - modules/llm_context_manager.py: Added add_command_context() method
+  - modules/llm_context_manager.py: Updated get_context() to SELECT new fields
+  - modules/llm_context_manager.py: Updated format_context_for_ollama() docstring
+  - modules/commands/llm_command.py: Added track_all_commands config loading
+  - config.ini.example: Added track_all_commands setting with examples
+  - tests/test_llm_context_manager.py: Added TestAddCommandContext class (5 tests)
+  - tests/test_llm_context_manager.py: Added TestCommandContextFields class (2 tests)
+
+- **Learnings for future iterations:**
+  - Command context uses same timestamp approach as regular messages (user + 0.001 for assistant)
+  - Migration 14 added command_name and sender_name columns - use them in SELECT queries
+  - add_command_context() creates TWO entries: user role (command input) + assistant role (bot response)
+  - format_context_for_ollama() doesn't need changes - it only extracts role and content
+  - Test ordering may vary due to timestamps - filter by command_name rather than index
+  - Command context enables LLM to reference previous bot interactions (wx, path, airplanes, etc.)
+  - Both command context and regular LLM messages can coexist in same context_key
+
+---
