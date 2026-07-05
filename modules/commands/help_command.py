@@ -66,18 +66,28 @@ class HelpCommand(BaseCommand):
     async def execute(self, message: MeshMessage) -> bool:
         """Execute the help command.
 
-        Note: The help command logic is primarily handled by the CommandManager's
-        keyword matching system. This method serves as a placeholder or fallback.
+        Provides either general help (list of commands) or specific help for a command.
 
         Args:
             message: The message that triggered the command.
 
         Returns:
-            bool: True (always, as actual processing happens elsewhere).
+            bool: True (always).
         """
-        # The help command is now handled by keyword matching in the command manager
-        # This is just a placeholder for future functionality
-        self.logger.debug("Help command executed (handled by keyword matching)")
+        content = message.content.strip()
+        if content.startswith("!"):
+            content = content[1:].strip()
+
+        # Check if requesting help for a specific command
+        if content.lower().startswith("help "):
+            command_name = content[5:].strip()
+            help_text = self.get_specific_help(command_name, message)
+            await self.send_response(message, help_text)
+        else:
+            # General help - show list of all commands
+            help_text = self.get_general_help()
+            await self.send_response(message, help_text)
+
         return True
 
     def get_specific_help(self, command_name: str, message: MeshMessage = None) -> str:
@@ -134,18 +144,24 @@ class HelpCommand(BaseCommand):
             available = self.get_available_commands_list(message)
             return self.translate('commands.help.unknown', command=command_name, available=available)
 
-    def get_general_help(self) -> str:
+    def get_general_help(self, message: Optional[MeshMessage] = None) -> str:
         """Get general help text.
 
         Compiles a list of available commands and usage examples.
 
+        Args:
+            message: Optional message for context-aware filtering.
+
         Returns:
             str: The general help message to display to users.
         """
-        commands_list = self.get_available_commands_list()
-        help_text = self.translate('commands.help.general', commands_list=commands_list)
-        help_text += self.translate('commands.help.usage_examples')
-        help_text += self.translate('commands.help.custom_syntax')
+        # Get command list (respects channel filtering when message provided)
+        commands_list = self.get_available_commands_list(message)
+
+        # Build concise help response optimized for LoRa
+        help_text = f"Commands: {commands_list}"
+        help_text += " | Use 'help <cmd>' for details"
+
         return help_text
 
     def _is_command_valid_for_channel(self, cmd_name: str, cmd_instance: Any, message: Optional[MeshMessage]) -> bool:
