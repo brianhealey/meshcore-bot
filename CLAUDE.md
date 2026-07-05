@@ -90,6 +90,64 @@ make deb
 docker compose up -d --build
 ```
 
+## Production Deployment
+
+**IMPORTANT: Always deploy changes to the production server after committing and pushing to main.**
+
+The production bot runs on `brian@10.100.10.49` at `/opt/meshcore-bot/` as a systemd service.
+
+### Deployment Workflow
+
+After making changes and pushing to main, deploy to production:
+
+```bash
+# 1. Sync modules directory to server
+rsync -avz --delete modules/ brian@10.100.10.49:/opt/meshcore-bot/modules/
+
+# 2. Fix ownership (modules directory is owned by meshcore:meshcore)
+ssh brian@10.100.10.49 "sudo chown -R meshcore:meshcore /opt/meshcore-bot/modules/"
+
+# 3. Restart the bot service
+ssh brian@10.100.10.49 "sudo systemctl restart meshcore-bot"
+
+# 4. Verify service is running
+ssh brian@10.100.10.49 "sudo systemctl status meshcore-bot --no-pager"
+
+# 5. Monitor logs for startup issues
+ssh brian@10.100.10.49 "sudo journalctl -u meshcore-bot --since '1 minute ago' --no-pager | tail -20"
+```
+
+### Production Server Details
+
+- **Server**: brian@10.100.10.49
+- **Install Path**: /opt/meshcore-bot/
+- **Service**: meshcore-bot.service (systemd)
+- **User**: meshcore (service runs as this user)
+- **Config**: /opt/meshcore-bot/config.ini
+- **Logs**: `sudo journalctl -u meshcore-bot -f`
+- **Data**: /opt/meshcore-bot/data/
+
+### Deployment Notes
+
+- The server installation is NOT a git repository
+- Use `rsync` to sync code changes (not git pull)
+- Always fix ownership after rsync (files are owned by meshcore user)
+- The bot automatically reloads on service restart
+- Configuration changes require manual editing on server or rsync of config.ini
+- Database migrations run automatically on startup
+
+### Quick Deploy Script
+
+For convenience, you can run all deployment steps with:
+
+```bash
+# One-liner to deploy and verify
+rsync -avz --delete modules/ brian@10.100.10.49:/opt/meshcore-bot/modules/ && \
+ssh brian@10.100.10.49 "sudo chown -R meshcore:meshcore /opt/meshcore-bot/modules/ && \
+sudo systemctl restart meshcore-bot && \
+sudo systemctl status meshcore-bot --no-pager"
+```
+
 ## Architecture Overview
 
 The bot uses a modular plugin architecture with clear separation of concerns:
