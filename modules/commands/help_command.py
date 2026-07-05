@@ -85,8 +85,15 @@ class HelpCommand(BaseCommand):
             await self.send_response(message, help_text)
         else:
             # General help - show list of all commands
-            help_text = self.get_general_help()
-            await self.send_response(message, help_text)
+            # Build command list and manually chunk it
+            command_list = self._build_command_list(message)
+            chunks = self._chunk_command_list(command_list, message)
+
+            # Send chunked response
+            if len(chunks) == 1:
+                await self.send_response(message, chunks[0])
+            else:
+                await self.send_response_chunked(message, chunks)
 
         return True
 
@@ -144,17 +151,14 @@ class HelpCommand(BaseCommand):
             available = self.get_available_commands_list(message)
             return self.translate('commands.help.unknown', command=command_name, available=available)
 
-    def get_general_help(self, message: Optional[MeshMessage] = None) -> str:
-        """Get general help text.
-
-        Compiles a list of available commands formatted for multi-part responses.
-        Filters out administrative, management, and sensitive commands.
+    def _build_command_list(self, message: Optional[MeshMessage] = None) -> list[str]:
+        """Build list of available command names, filtered by security.
 
         Args:
             message: Optional message for context-aware filtering.
 
         Returns:
-            str: The general help message to display to users (may be split into chunks).
+            List of command names (sorted alphabetically).
         """
         # Categories to exclude from public help listing (security/admin commands)
         EXCLUDED_CATEGORIES = {
@@ -170,10 +174,7 @@ class HelpCommand(BaseCommand):
             'multitest',    # Testing/debug command
         }
 
-        # Get all available commands (respects channel filtering when message provided)
         try:
-            # Get commands from command manager
-            plugin_loader = self.bot.command_manager.plugin_loader
             primary_names = []
 
             for cmd_name, cmd_instance in self.bot.command_manager.commands.items():
@@ -200,15 +201,106 @@ class HelpCommand(BaseCommand):
 
             # Sort alphabetically for consistent display
             primary_names.sort()
+            return primary_names
 
-            # Format as comma-separated list that will be automatically chunked
-            commands_list = ', '.join(primary_names)
+        except Exception as e:
+            self.logger.error(f"Error building command list: {e}")
+            return []
 
-            # Build response - BaseCommand.send_response will handle chunking
-            help_text = f"Commands: {commands_list}. Use 'help <cmd>' for details."
+    def _chunk_command_list(self, commands: list[str], message: Optional[MeshMessage] = None) -> list[str]:
+        """Chunk command list into multiple messages accounting for prefix overhead.
 
-            return help_text
+        Accounts for:
+        - Chunk indicator: [N/M] (max 7 chars for [99/99])
+        - Message prefix overhead
 
+        Args:
+            commands: List of command names to chunk.
+            message: Optional message for max length calculation.
+
+        Returns:
+            List of chunked message strings with proper prefixes.
+        """
+        if not commands:
+            return ["No commands available."]
+
+        # Calculate max length per chunk
+        max_length = self.get_max_message_length(message) if message else 160
+
+        # Reserve space for chunk indicator [N/M] and spacing
+        # Worst case: "[99/99] " = 8 chars
+        chunk_indicator_overhead = 8
+        prefix = "Commands: "
+        suffix = ". Use 'help <cmd>' for details."
+
+        # Calculate available space for command names per chunk
+        available_per_chunk = max_length - chunk_indicator_overhead - len(prefix) - len(suffix)
+
+        # Build chunks
+        chunks = []
+        current_chunk = []
+        current_length = 0
+
+        for cmd in commands:
+            # Length needed: command + ", " (except for first in chunk)
+            needed = len(cmd) + (2 if current_chunk else 0)
+
+            if current_length + needed <= available_per_chunk:
+                current_chunk.append(cmd)
+                current_length += needed
+            else:
+                # Finalize current chunk
+                if current_chunk:
+                    chunks.append(current_chunk)
+                # Start new chunk
+                current_chunk = [cmd]
+                current_length = len(cmd)
+
+        # Add final chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        # Format chunks with indicators
+        total_chunks = len(chunks)
+        formatted_chunks = []
+
+        for i, chunk_commands in enumerate(chunks, 1):
+            command_list = ', '.join(chunk_commands)
+
+            if total_chunks == 1:
+                # Single chunk - no indicator needed
+                formatted = f"{prefix}{command_list}{suffix}"
+            else:
+                # Multiple chunks - add indicator
+                indicator = f"[{i}/{total_chunks}] "
+                if i == total_chunks:
+                    # Last chunk gets the suffix
+                    formatted = f"{indicator}{prefix}{command_list}{suffix}"
+                else:
+                    # Middle chunks get just the command list
+                    formatted = f"{indicator}{prefix}{command_list}"
+
+            formatted_chunks.append(formatted)
+
+        return formatted_chunks
+
+    def get_general_help(self, message: Optional[MeshMessage] = None) -> str:
+        """Get general help text (simple format for keyword matching).
+
+        This method is called by command_manager for keyword-based help.
+        For proper chunking, use execute() method instead.
+
+        Args:
+            message: Optional message for context-aware filtering.
+
+        Returns:
+            str: Simple help message (may exceed length limits if not chunked).
+        """
+        try:
+            # Build and format command list
+            commands = self._build_command_list(message)
+            commands_list = ', '.join(commands)
+            return f"Commands: {commands_list}. Use 'help <cmd>' for details."
         except Exception as e:
             self.logger.error(f"Error getting general help: {e}")
             return "Error loading command list. Try 'help <command>' for specific help."
