@@ -6,9 +6,11 @@ Decodes hex path data to show which repeaters were involved in message routing
 
 import asyncio
 import contextlib
+import json
 import re
 import time
 from typing import Any, Callable, Optional
+from urllib.parse import quote
 
 from ..models import MeshMessage
 from ..security_utils import sanitize_name
@@ -217,13 +219,39 @@ class PathCommand(BaseCommand):
         )
 
     async def _decode_node_ids(
-        self, node_ids: list[str], routing_info: Optional[dict[str, Any]] = None
+        self, node_ids: list[str], routing_info: Optional[dict[str, Any]] = None, message: Optional[MeshMessage] = None
     ) -> str:
+        # Prepend sender's node ID to complete the route (sender → intermediate hops → destination)
+        sender_node_id = None
+        if message and message.sender_pubkey:
+            # Extract sender's node prefix (same length as path nodes)
+            if node_ids and len(node_ids[0]) <= len(message.sender_pubkey):
+                sender_node_id = message.sender_pubkey[:len(node_ids[0])].lower()
+
+        # Prepend sender to start of route
+        if sender_node_id and sender_node_id not in node_ids:
+            node_ids = [sender_node_id] + node_ids
+
+        # Add bot's node ID to complete the route (intermediate hops + destination)
+        bot_node_id = None
+        if hasattr(self.bot, 'meshcore') and hasattr(self.bot.meshcore, 'device_info'):
+            device_info = self.bot.meshcore.device_info
+            if isinstance(device_info, dict) and 'public_key' in device_info:
+                # Extract bot's node prefix (same length as path nodes)
+                bot_pubkey = device_info['public_key']
+                if node_ids and len(node_ids[0]) <= len(bot_pubkey):
+                    bot_node_id = bot_pubkey[:len(node_ids[0])].lower()
+
+        # Append bot to complete route
+        if bot_node_id and bot_node_id not in node_ids:
+            node_ids = node_ids + [bot_node_id]
+
         self.logger.info(f"Decoding path with {len(node_ids)} nodes: {','.join(node_ids)}")
         if not self._should_resolve_repeater_names(node_ids, routing_info):
             return self._format_repeater_resolution_deferred(node_ids)
         repeater_info = await self._lookup_repeater_names(node_ids)
-        return self._format_path_response(node_ids, repeater_info)
+        sender_name = message.sender_id or "User" if message else "User"
+        return await self._format_path_response(node_ids, repeater_info, sender_name)
 
     def can_execute(self, message: MeshMessage, skip_channel_check: bool = False) -> bool:
         """Check if this command can be executed with the given message.
@@ -268,18 +296,18 @@ class PathCommand(BaseCommand):
 
         if len(parts) < 2:
             # No arguments provided - try to extract path from current message
-            response = await self._extract_path_from_recent_messages()
+            response = await self._extract_path_from_recent_messages(message)
         else:
             # Extract path data from the command
             path_input = " ".join(parts[1:])
-            response = await self._decode_path(path_input)
+            response = await self._decode_path(path_input, None, message)
 
         # Send the response (may be split into multiple messages if long)
         await self._send_path_response(message, response)
         return True
 
     async def _decode_path(
-        self, path_input: str, routing_info: Optional[dict[str, Any]] = None
+        self, path_input: str, routing_info: Optional[dict[str, Any]] = None, message: Optional[MeshMessage] = None
     ) -> str:
         """Decode hex path data to repeater names.
         Comma-separated tokens infer hop size (2, 4, or 6 hex chars per node).
@@ -310,7 +338,7 @@ class PathCommand(BaseCommand):
             if not node_ids:
                 return self.translate('commands.path.no_valid_hex')
 
-            return await self._decode_node_ids(node_ids, routing_info)
+            return await self._decode_node_ids(node_ids, routing_info, message)
 
         except Exception as e:
             self.logger.error(f"Error decoding path: {e}")
@@ -591,6 +619,8 @@ class PathCommand(BaseCommand):
                                 'device_type': selected_repeater['device_type'],
                                 'last_seen': selected_repeater['last_seen'],
                                 'is_active': selected_repeater['is_active'],
+                                'adv_lat': selected_repeater.get('latitude'),
+                                'adv_lon': selected_repeater.get('longitude'),
                                 'found': True,
                                 'collision': False,
                                 'geographic_guess': (selection_method == 'geographic'),
@@ -615,6 +645,8 @@ class PathCommand(BaseCommand):
                             'device_type': repeater['device_type'],
                             'last_seen': repeater['last_seen'],
                             'is_active': repeater['is_active'],
+                            'adv_lat': repeater.get('latitude'),
+                            'adv_lon': repeater.get('longitude'),
                             'found': True,
                             'collision': False
                         }
@@ -640,6 +672,8 @@ class PathCommand(BaseCommand):
                                         'device_type': contact_data.get('type', 'Unknown'),
                                         'last_seen': 'Active',
                                         'is_active': True,
+                                        'adv_lat': contact_data.get('adv_lat'),
+                                        'adv_lon': contact_data.get('adv_lon'),
                                         'source': 'device'
                                     })
 
@@ -662,6 +696,8 @@ class PathCommand(BaseCommand):
                                 'device_type': match['device_type'],
                                 'last_seen': match['last_seen'],
                                 'is_active': match['is_active'],
+                                'adv_lat': match.get('adv_lat'),
+                                'adv_lon': match.get('adv_lon'),
                                 'found': True,
                                 'collision': False,
                                 'source': 'device'
@@ -681,6 +717,38 @@ class PathCommand(BaseCommand):
                     'node_id': node_id,
                     'error': str(e)
                 }
+
+        # Add bot's own info if it's in the node list
+        if hasattr(self.bot, 'meshcore') and hasattr(self.bot.meshcore, 'device_info'):
+            device_info = self.bot.meshcore.device_info
+            if isinstance(device_info, dict) and 'public_key' in device_info:
+                bot_pubkey = device_info['public_key']
+                # Check if any node_id matches bot's prefix
+                for node_id in node_ids:
+                    if bot_pubkey.lower().startswith(node_id.lower()) and node_id not in repeater_info:
+                        # Get bot location from config
+                        bot_lat = None
+                        bot_lon = None
+                        if hasattr(self.bot, 'config'):
+                            try:
+                                bot_lat = self.bot.config.getfloat('Bot', 'latitude', fallback=None)
+                                bot_lon = self.bot.config.getfloat('Bot', 'longitude', fallback=None)
+                            except:
+                                pass
+
+                        bot_name = device_info.get('adv_name', device_info.get('name', 'Bot'))
+                        repeater_info[node_id] = {
+                            'name': bot_name,
+                            'public_key': bot_pubkey,
+                            'device_type': 'companion',
+                            'last_seen': 'Active',
+                            'is_active': True,
+                            'adv_lat': bot_lat,
+                            'adv_lon': bot_lon,
+                            'found': True,
+                            'collision': False,
+                            'source': 'bot'
+                        }
 
         return repeater_info
 
@@ -1665,117 +1733,191 @@ class PathCommand(BaseCommand):
 
         return None, 0.0, None
 
-    def _format_path_response(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]]) -> str:
-        """Format the path decode response
+    async def _shorten_url(self, long_url: str) -> Optional[str]:
+        """Shorten URL using da.gd API
 
-        Maintains the order of repeaters as they appear in the path (first to last)
+        Args:
+            long_url: The URL to shorten
+
+        Returns:
+            Shortened URL or None if shortening fails
         """
-        # Build response lines in path order (first to last as message traveled)
-        lines = []
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    'https://da.gd/s',
+                    data={'url': long_url},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        short_url = await response.text()
+                        return short_url.strip()
+        except Exception as e:
+            self.logger.warning(f"URL shortening failed: {e}")
+        return None
 
-        # Process nodes in path order (first to last as message traveled)
-        for node_id in node_ids:
+    def _generate_geojson(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]]) -> dict:
+        """Generate GeoJSON for path visualization
+
+        Args:
+            node_ids: List of node IDs in path order (includes bot as final destination)
+            repeater_info: Dict mapping node IDs to repeater information
+
+        Returns:
+            GeoJSON FeatureCollection dict
+        """
+        features = []
+        coordinates = []
+
+        # Collect coordinates and create point features
+        for idx, node_id in enumerate(node_ids, 1):
             info = repeater_info.get(node_id, {})
+            lat = info.get('adv_lat')
+            lon = info.get('adv_lon')
+            name = info.get('name', f'Node {node_id}')
 
-            if info.get('found', False):
-                if info.get('collision', False):
-                    # Multiple repeaters with same prefix
-                    matches = info.get('matches', 0)
-                    line = self.translate('commands.path.node_collision', node_id=node_id, matches=matches)
-                elif info.get('geographic_guess', False) or info.get('graph_guess', False):
-                    # Geographic or graph-based selection
-                    name = info.get('name', self.translate('commands.path.unknown_name'))
-                    confidence = info.get('confidence', 0.0)
+            if lat is not None and lon is not None and lat != 0.0 and lon != 0.0:
+                coordinates.append([lon, lat])
 
-                    # Truncate name if too long
-                    truncation = self.translate('commands.path.truncation')
-                    name = self._truncate_to_byte_length(name, 20, truncation)
+                # Create point feature
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [lon, lat]
+                    },
+                    "properties": {
+                        "title": f"{idx}. {name}",
+                        "marker-symbol": str(idx)
+                    }
+                })
 
-                    # Add confidence indicator
-                    if confidence >= 0.9:
-                        confidence_indicator = self.high_confidence_symbol
-                    elif confidence >= 0.8:
-                        confidence_indicator = self.medium_confidence_symbol
-                    else:
-                        confidence_indicator = self.low_confidence_symbol
+        # Add LineString if we have at least 2 points
+        if len(coordinates) >= 2:
+            features.insert(0, {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates
+                },
+                "properties": {
+                    "title": "route"
+                }
+            })
 
-                    # Use geographic translation key for backward compatibility, or add graph-specific if needed
-                    line = self.translate('commands.path.node_geographic', node_id=node_id, name=name, confidence=confidence_indicator)
-                else:
-                    # Single repeater found
-                    name = info.get('name', self.translate('commands.path.unknown_name'))
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
 
-                    truncation = self.translate('commands.path.truncation')
-                    name = self._truncate_to_byte_length(name, 27, truncation)
+    def _calculate_route_distance(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]]) -> float:
+        """Calculate total route distance (sum of hop distances)
 
-                    line = self.translate('commands.path.node_format', node_id=node_id, name=name)
-            else:
-                # Unknown repeater
-                line = self.translate('commands.path.node_unknown', node_id=node_id)
+        Args:
+            node_ids: List of node IDs in path order (includes bot as final destination)
+            repeater_info: Dict mapping node IDs to repeater information
 
-            line = self._truncate_to_byte_length(line, 150)
+        Returns:
+            Total route distance in miles
+        """
+        total_distance = 0.0
 
-            lines.append(line)
+        for i in range(len(node_ids) - 1):
+            curr_info = repeater_info.get(node_ids[i], {})
+            next_info = repeater_info.get(node_ids[i + 1], {})
 
-        # Return all lines - let _send_path_response handle the splitting
-        return "\n".join(lines)
+            curr_lat = curr_info.get('adv_lat')
+            curr_lon = curr_info.get('adv_lon')
+            next_lat = next_info.get('adv_lat')
+            next_lon = next_info.get('adv_lon')
+
+            if all(v is not None and v != 0.0 for v in [curr_lat, curr_lon, next_lat, next_lon]):
+                distance_km = calculate_distance(curr_lat, curr_lon, next_lat, next_lon)
+                total_distance += distance_km * 0.621371  # Convert km to miles
+
+        return total_distance
+
+    def _calculate_direct_distance(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]]) -> float:
+        """Calculate direct distance from start to end (straight line)
+
+        Args:
+            node_ids: List of node IDs in path order (includes bot as final destination)
+            repeater_info: Dict mapping node IDs to repeater information
+
+        Returns:
+            Direct distance in miles
+        """
+        if len(node_ids) < 2:
+            return 0.0
+
+        first_info = repeater_info.get(node_ids[0], {})
+        last_info = repeater_info.get(node_ids[-1], {})
+
+        first_lat = first_info.get('adv_lat')
+        first_lon = first_info.get('adv_lon')
+        last_lat = last_info.get('adv_lat')
+        last_lon = last_info.get('adv_lon')
+
+        if all(v is not None and v != 0.0 for v in [first_lat, first_lon, last_lat, last_lon]):
+            distance_km = calculate_distance(first_lat, first_lon, last_lat, last_lon)
+            return distance_km * 0.621371  # Convert km to miles
+
+        return 0.0
+
+    async def _format_path_response(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]], sender_name: str) -> str:
+        """Format the path decode response in compact format with GeoJSON URL
+
+        New format: @[name] [hop_count] path0,path1,path2 route: ~XX.Xmi, direct: ~XX.Xmi http://da.gd/xxxxx
+        """
+        # Format: @[sender_name] [hop_count] node1,node2,node3
+        hop_count = len(node_ids)
+        path_str = ','.join(node_id.lower() for node_id in node_ids)
+
+        # Calculate distances
+        route_distance = self._calculate_route_distance(node_ids, repeater_info)
+        direct_distance = self._calculate_direct_distance(node_ids, repeater_info)
+
+        # Generate GeoJSON
+        geojson = self._generate_geojson(node_ids, repeater_info)
+        geojson_str = json.dumps(geojson, separators=(',', ':'))  # Compact JSON
+        geojson_url = f"https://geojson.io/#data=data:application/json,{quote(geojson_str)}"
+
+        # Shorten the URL
+        short_url = await self._shorten_url(geojson_url)
+        url_part = short_url if short_url else "(map unavailable)"
+
+        # Build response
+        response = f"@[{sender_name}] {hop_count} {path_str} route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi {url_part}"
+
+        return response
 
     async def _send_path_response(self, message: MeshMessage, response: str):
-        """Send path response, splitting into multiple messages if necessary"""
-        prefix = self._format_path_reply_prefix(message)
-        self.last_response = prefix + response if prefix else response
+        """Send path response - new format already includes mention, no prefix needed"""
+        self.last_response = response
 
         max_length = self.get_max_message_length(message)
-        prefix_len = self._count_byte_length(prefix)
-        first_segment_max = max_length - prefix_len
-        if first_segment_max < 1:
-            first_segment_max = 1
 
-        if self._count_byte_length(response) + prefix_len <= max_length:
-            await self.send_response(message, prefix + response)
+        if self._count_byte_length(response) <= max_length:
+            await self.send_response(message, response)
             return
 
-        lines = response.split('\n')
-        current_message = ""
-        message_count = 0
+        # New format is single line, but if it exceeds max_length, truncate gracefully
+        if self._count_byte_length(response) > max_length:
+            # Truncate the response, try to keep the URL if possible
+            truncated = response[:max_length - 20] + "... (truncated)"
+            await self.send_response(message, truncated)
+        else:
+            await self.send_response(message, response)
 
-        for i, line in enumerate(lines):
-            body_budget = first_segment_max if message_count == 0 else max_length
-            if self._count_byte_length(current_message) + self._count_byte_length(line) + 1 > body_budget:
-                if current_message:
-                    if i < len(lines):
-                        current_message += self.translate('commands.path.continuation_end')
-                    out = (prefix + current_message.rstrip()) if message_count == 0 else current_message.rstrip()
-                    await self.send_response(
-                        message, out,
-                        skip_user_rate_limit=(message_count > 0)
-                    )
-                    await asyncio.sleep(3.0)
-                    message_count += 1
-
-                if message_count > 0:
-                    current_message = self.translate('commands.path.continuation_start', line=line)
-                else:
-                    current_message = line
-            else:
-                if current_message:
-                    current_message += f"\n{line}"
-                else:
-                    current_message = line
-
-        if current_message:
-            out = (prefix + current_message.rstrip()) if message_count == 0 else current_message.rstrip()
-            await self.send_response(message, out, skip_user_rate_limit=True)
-
-    async def _extract_path_from_recent_messages(self) -> str:
+    async def _extract_path_from_recent_messages(self, message: Optional[MeshMessage] = None) -> str:
         """Extract path from the current message's path information (same as test command).
         Prefers already-extracted routing_info.path_nodes when present (multi-byte path support).
         """
         try:
-            if not hasattr(self, '_current_message') or not self._current_message:
+            msg = message if message else (self._current_message if hasattr(self, '_current_message') else None)
+            if not msg:
                 return self.translate('commands.path.no_path')
-
-            msg = self._current_message
 
             # Prefer routing_info when present (no re-parsing; preserves bytes_per_hop)
             routing_info = getattr(msg, 'routing_info', None)
@@ -1786,7 +1928,7 @@ class PathCommand(BaseCommand):
                 path_nodes = routing_info.get('path_nodes', [])
                 if path_nodes:
                     node_ids = [n.upper() for n in path_nodes]
-                    return await self._decode_node_ids(node_ids, routing_info)
+                    return await self._decode_node_ids(node_ids, routing_info, msg)
 
             # Fallback: parse message.path string (e.g. no routing_info or legacy path)
             if not msg.path:
@@ -1799,10 +1941,10 @@ class PathCommand(BaseCommand):
             path_part = path_string.split(" via ROUTE_TYPE_")[0] if " via ROUTE_TYPE_" in path_string else path_string
 
             if ',' in path_part:
-                return await self._decode_path(path_part, routing_info)
+                return await self._decode_path(path_part, routing_info, msg)
             hex_pattern = rf'[0-9a-fA-F]{{{getattr(self.bot, "prefix_hex_chars", 2)}}}'
             if re.search(hex_pattern, path_part):
-                return await self._decode_path(path_part, routing_info)
+                return await self._decode_path(path_part, routing_info, msg)
             return self.translate('commands.path.path_prefix', path_string=path_string)
 
         except Exception as e:
