@@ -147,22 +147,41 @@ class HelpCommand(BaseCommand):
     def get_general_help(self, message: Optional[MeshMessage] = None) -> str:
         """Get general help text.
 
-        Compiles a list of available commands and usage examples.
+        Compiles a list of available commands formatted for multi-part responses.
 
         Args:
             message: Optional message for context-aware filtering.
 
         Returns:
-            str: The general help message to display to users.
+            str: The general help message to display to users (may be split into chunks).
         """
-        # Get command list (respects channel filtering when message provided)
-        commands_list = self.get_available_commands_list(message)
+        # Get all available commands (respects channel filtering when message provided)
+        try:
+            # Get commands from command manager
+            plugin_loader = self.bot.command_manager.plugin_loader
+            primary_names = []
 
-        # Build concise help response optimized for LoRa
-        help_text = f"Commands: {commands_list}"
-        help_text += " | Use 'help <cmd>' for details"
+            for cmd_name, cmd_instance in self.bot.command_manager.commands.items():
+                if not self._is_command_valid_for_channel(cmd_name, cmd_instance, message):
+                    continue
+                primary_name = cmd_instance.name if hasattr(cmd_instance, 'name') else cmd_name
+                if primary_name not in primary_names:
+                    primary_names.append(primary_name)
 
-        return help_text
+            # Sort alphabetically for consistent display
+            primary_names.sort()
+
+            # Format as comma-separated list that will be automatically chunked
+            commands_list = ', '.join(primary_names)
+
+            # Build response - BaseCommand.send_response will handle chunking
+            help_text = f"Commands: {commands_list}. Use 'help <cmd>' for details."
+
+            return help_text
+
+        except Exception as e:
+            self.logger.error(f"Error getting general help: {e}")
+            return "Error loading command list. Try 'help <command>' for specific help."
 
     def _is_command_valid_for_channel(self, cmd_name: str, cmd_instance: Any, message: Optional[MeshMessage]) -> bool:
         """Return True if this command is valid in the message's channel context."""
