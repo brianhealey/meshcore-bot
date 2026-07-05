@@ -148,6 +148,7 @@ class HelpCommand(BaseCommand):
         """Get general help text.
 
         Compiles a list of available commands formatted for multi-part responses.
+        Filters out administrative, management, and sensitive commands.
 
         Args:
             message: Optional message for context-aware filtering.
@@ -155,6 +156,20 @@ class HelpCommand(BaseCommand):
         Returns:
             str: The general help message to display to users (may be split into chunks).
         """
+        # Categories to exclude from public help listing (security/admin commands)
+        EXCLUDED_CATEGORIES = {
+            'admin',        # Administrative commands (reload, schedule, status, etc.)
+            'management',   # Management commands (webviewer, etc.)
+            'special',      # Special commands (advert - may leak device details)
+            'emergency',    # Emergency commands (alert - sensitive)
+        }
+
+        # Individual commands to exclude (leak version info useful for exploits)
+        EXCLUDED_COMMANDS = {
+            'version',      # Leaks bot version info
+            'multitest',    # Testing/debug command
+        }
+
         # Get all available commands (respects channel filtering when message provided)
         try:
             # Get commands from command manager
@@ -164,9 +179,24 @@ class HelpCommand(BaseCommand):
             for cmd_name, cmd_instance in self.bot.command_manager.commands.items():
                 if not self._is_command_valid_for_channel(cmd_name, cmd_instance, message):
                     continue
+
+                # Get primary name
                 primary_name = cmd_instance.name if hasattr(cmd_instance, 'name') else cmd_name
-                if primary_name not in primary_names:
-                    primary_names.append(primary_name)
+
+                # Skip if already added
+                if primary_name in primary_names:
+                    continue
+
+                # Filter out excluded categories
+                category = getattr(cmd_instance, 'category', None)
+                if category and category in EXCLUDED_CATEGORIES:
+                    continue
+
+                # Filter out excluded individual commands
+                if primary_name in EXCLUDED_COMMANDS:
+                    continue
+
+                primary_names.append(primary_name)
 
             # Sort alphabetically for consistent display
             primary_names.sort()
