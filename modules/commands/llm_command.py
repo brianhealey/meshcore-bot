@@ -597,4 +597,4 @@ class LLMCommand(BaseCommand):
         sender_name = message.sender_id or "User"
 
         # Add mention prefix
-        return f"[@{sender_name}] {response}"
+        return f"@[{sender_name}] {response}"
