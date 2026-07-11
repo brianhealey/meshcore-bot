@@ -66,6 +66,22 @@ help repeater
 
 **Response:** Lists commands or provides detailed information about the specified command.
 
+**Configuration:** `[Help_Command]`:
+- `enabled` — Enable/disable the command (default true)
+- `public_channel_mode` — Controls how help responds on public channels:
+  - `full` (default) — Send full command list on channel
+  - `redirect` — Tell user to DM the bot for help (reduces channel noise)
+  - `brief` — Send short list on channel + full list via DM
+
+**Example Config:**
+```ini
+[Help_Command]
+enabled = true
+public_channel_mode = redirect
+```
+
+**Note:** DMs always receive the full help regardless of mode setting.
+
 ---
 
 ### `hello`
@@ -638,6 +654,30 @@ catfact
 
 ---
 
+### `ding`
+
+Fun command that responds with "Dong!" (or a custom configured response).
+
+**Usage:**
+```
+ding
+```
+
+**Response:** `Dong!` (default) or custom response from config.
+
+**Configuration:** `[Ding_Command]`:
+- `enabled` — Enable/disable the command (default true)
+- `response` — Custom response text (default "Dong!")
+
+**Example Config:**
+```ini
+[Ding_Command]
+enabled = true
+response = Dong! 🔔
+```
+
+---
+
 ### RandomLine (configurable triggers)
 
 Not a single fixed command name — **`[RandomLine]`** defines trigger words that return a random line from a text file. Useful for fortunes, facts, or custom responses.
@@ -832,6 +872,35 @@ mt
 ```
 
 **Response:** List of all unique routing paths discovered during the 6-second listening period.
+
+---
+
+### `health` or `connectivity`
+
+Check mesh network connectivity health based on repeater advertisement observations.
+
+**Aliases:** `connectivity`
+
+**Usage:**
+```
+health
+connectivity
+```
+
+**Response:** Connectivity metrics including:
+- Repeaters known (total in contact database)
+- Repeaters heard in last 48 hours
+- Repeaters heard in last 24 hours
+- Connectivity percentage (heard/known × 100)
+
+**Example Response:**
+```
+Mesh Health: 15 known / 12 heard (48h) / 8 heard (24h), 53% connectivity
+```
+
+**Configuration:** `[Health_Command]` — `enabled` (default true).
+
+**Note:** Connectivity metrics are based on repeater advertisements received by the bot. A repeater must have advertised within the time window to be counted as "heard."
 
 ## Command Syntax
 

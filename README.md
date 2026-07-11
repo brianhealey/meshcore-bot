@@ -25,6 +25,7 @@ A Python bot that connects to MeshCore mesh networks via serial port, BLE, or TC
 - **Web Viewer**: Browser-based dashboard for monitoring contacts, mesh graph, radio settings, feeds, live packets, and logs
 - **Radio Control**: Reboot or connect/disconnect the radio connection from the web viewer
 - **Database Migrations**: Versioned schema migrations via `MigrationRunner` — safe upgrades across versions
+- **Connectivity Metrics**: Track mesh network health via repeater advertisements (`!health` command)
 - **DB Backup Scheduling**: Automated daily/weekly database backups with configurable retention
 - **Nightly Maintenance Email**: Daily digest with uptime, network activity, DB stats, and error counts
 - **Log Rotation**: Configurable log rotation via `[Logging]` section
@@ -488,9 +489,9 @@ Quick reference:
 - **Information:** `wx`, `gwx`, `aqi`, `sun`, `moon`, `solar`, `solarforecast`, `hfcond`, `satpass`, `channels`
 - **Emergency:** `alert`
 - **Gaming:** `dice`, `roll`, `magic8`
-- **Entertainment:** `joke`, `dadjoke`, `hacker`, `catfact`
+- **Entertainment:** `joke`, `dadjoke`, `hacker`, `catfact`, `ding`
 - **Sports:** `sports`
-- **MeshCore Utility:** `path`, `prefix`, `stats`, `multitest`, `webviewer`
+- **MeshCore Utility:** `path`, `prefix`, `stats`, `multitest`, `webviewer`, `health`
 - **Management (DM only):** `repeater`, `advert`, `feed`, `announcements`, `greeter`, `schedule`
 
 ### `schedule` Command (DM only)
