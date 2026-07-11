@@ -2042,3 +2042,97 @@ class TestHandleNewContactAutoManage:
         await handler.handle_new_contact(ev, None)
         assert rm.track_contact_advertisement.await_count == 2
         rm.add_companion_from_contact_data.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _record_repeater_advert
+# ---------------------------------------------------------------------------
+
+
+class TestRecordRepeaterAdvert:
+    """Tests for MessageHandler._record_repeater_advert()."""
+
+    @pytest.fixture
+    def handler_with_db(self, bot):
+        """Handler with db_manager mock."""
+        bot.db_manager = Mock()
+        bot.db_manager.execute_update = Mock(return_value=1)
+        return MessageHandler(bot)
+
+    async def test_no_pubkey_skips_insert(self, handler_with_db):
+        """No public_key in advert_data does not attempt DB insert."""
+        advert_data = {"name": "TestRepeater"}
+        signal_info = {"snr": 10.5, "rssi": -90, "hops": 2}
+
+        await handler_with_db._record_repeater_advert(advert_data, signal_info)
+
+        handler_with_db.bot.db_manager.execute_update.assert_not_called()
+
+    async def test_empty_pubkey_skips_insert(self, handler_with_db):
+        """Empty public_key does not attempt DB insert."""
+        advert_data = {"public_key": "", "name": "TestRepeater"}
+        signal_info = {"snr": 10.5}
+
+        await handler_with_db._record_repeater_advert(advert_data, signal_info)
+
+        handler_with_db.bot.db_manager.execute_update.assert_not_called()
+
+    async def test_valid_advert_inserts_into_db(self, handler_with_db):
+        """Valid advert data inserts into repeater_adverts table."""
+        advert_data = {"public_key": "abc123def456", "name": "MyRepeater"}
+        signal_info = {"snr": 8.5, "rssi": -85, "hops": 1}
+
+        await handler_with_db._record_repeater_advert(advert_data, signal_info)
+
+        handler_with_db.bot.db_manager.execute_update.assert_called_once()
+        call_args = handler_with_db.bot.db_manager.execute_update.call_args
+        query = call_args[0][0]
+        params = call_args[0][1]
+        assert "INSERT INTO repeater_adverts" in query
+        assert params == ("abc123def456", "MyRepeater", 8.5, -85, 1)
+
+    async def test_partial_signal_info_inserts_nones(self, handler_with_db):
+        """Missing signal fields insert as None."""
+        advert_data = {"public_key": "xyz789", "name": None}
+        signal_info = {"snr": 5.0}  # No rssi or hops
+
+        await handler_with_db._record_repeater_advert(advert_data, signal_info)
+
+        handler_with_db.bot.db_manager.execute_update.assert_called_once()
+        call_args = handler_with_db.bot.db_manager.execute_update.call_args
+        params = call_args[0][1]
+        assert params == ("xyz789", None, 5.0, None, None)
+
+    async def test_no_db_manager_does_not_raise(self, bot):
+        """No db_manager attribute does not raise exception."""
+        handler = MessageHandler(bot)
+        # bot does not have db_manager attribute
+        advert_data = {"public_key": "test123", "name": "Test"}
+        signal_info = {"snr": 10.0}
+
+        # Should not raise
+        await handler._record_repeater_advert(advert_data, signal_info)
+
+    async def test_db_manager_none_does_not_raise(self, bot):
+        """db_manager set to None does not raise exception."""
+        bot.db_manager = None
+        handler = MessageHandler(bot)
+        advert_data = {"public_key": "test123", "name": "Test"}
+        signal_info = {"snr": 10.0}
+
+        # Should not raise
+        await handler._record_repeater_advert(advert_data, signal_info)
+
+    async def test_db_exception_caught_and_logged(self, handler_with_db):
+        """Database exception is caught and logged as warning."""
+        handler_with_db.bot.db_manager.execute_update = Mock(
+            side_effect=Exception("DB write error")
+        )
+        advert_data = {"public_key": "test123", "name": "Test"}
+        signal_info = {"snr": 10.0}
+
+        # Should not raise
+        await handler_with_db._record_repeater_advert(advert_data, signal_info)
+
+        # Verify warning was logged
+        handler_with_db.bot.logger.warning.assert_called()

@@ -836,6 +836,9 @@ class MessageHandler:
                         hop_info = f" ({hop_count} hop{'s' if hop_count != 1 else ''})" if hop_count is not None else ""
 
                         self.logger.info(f"📡 Tracked {mode}: {name}{location}{hop_info}")
+
+                        # Insert into repeater_adverts table for connectivity metrics
+                        await self._record_repeater_advert(advert_data, signal_info)
                     else:
                         self.logger.warning(
                             f"Failed to track contact advertisement: {sanitize_name(advert_data.get('name', 'Unknown'))}"
@@ -843,6 +846,48 @@ class MessageHandler:
 
         except Exception as e:
             self.logger.error(f"Error processing advertisement packet: {e}")
+
+    async def _record_repeater_advert(
+        self, advert_data: dict[str, Any], signal_info: dict[str, Any]
+    ) -> None:
+        """Record a repeater advertisement in the repeater_adverts table.
+
+        This creates a time-series record of all observed advertisements
+        for connectivity metrics and analysis.
+
+        Args:
+            advert_data: Dictionary containing advert information including
+                public_key and name.
+            signal_info: Dictionary containing signal metrics (snr, rssi, hops).
+        """
+        try:
+            # Extract required fields
+            repeater_pubkey = advert_data.get("public_key", "")
+            if not repeater_pubkey:
+                self.logger.debug("Cannot record advert: no public_key")
+                return
+
+            repeater_name = advert_data.get("name")
+            snr = signal_info.get("snr")
+            rssi = signal_info.get("rssi")
+            hops = signal_info.get("hops")
+
+            # Insert into repeater_adverts table
+            if hasattr(self.bot, "db_manager") and self.bot.db_manager:
+                insert_query = """
+                    INSERT INTO repeater_adverts (repeater_pubkey, repeater_name, snr, rssi, hops)
+                    VALUES (?, ?, ?, ?, ?)
+                """
+                rows_affected = self.bot.db_manager.execute_update(
+                    insert_query, (repeater_pubkey, repeater_name, snr, rssi, hops)
+                )
+                if rows_affected > 0:
+                    self.logger.debug(
+                        f"Recorded advert observation: {sanitize_name(repeater_name or 'Unknown')} "
+                        f"(SNR: {snr}, RSSI: {rssi}, hops: {hops})"
+                    )
+        except Exception as e:
+            self.logger.warning(f"Failed to record repeater advert: {e}")
 
     async def handle_rf_log_data(self, event: Any, metadata: dict[str, Any] | None = None) -> None:
         """Handle RF log data events to cache SNR information and store raw packet data.
