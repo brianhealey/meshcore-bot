@@ -26,17 +26,30 @@ class StatsCommand(BaseCommand):
 
     # Documentation
     short_description = "Show mesh network activity and bot usage statistics for past 24 hours. Use for questions about network activity, message volume, active nodes, channel usage, or routing patterns."
-    usage = "stats [messages|channels|paths|adverts]"
-    examples = ["stats", "stats channels"]
-    parameters = [
+    usage = "stats [messages|channels|paths|adverts] [limit=N]"
+    examples = ["stats", "stats channels", "stats messages limit=50"]
+    parameters: list[dict[str, Any]] = [
         {
             "name": "type",
             "description": "Type of stats to show: 'messages' for message activity, 'channels' for channel usage, 'paths' for routing patterns, 'adverts' for node advertisements. Omit for summary.",
             "required": False,
             "type": "string",
             "enum": ["messages", "channels", "paths", "adverts"]
+        },
+        {
+            "name": "limit",
+            "description": "Maximum number of results to return (default 20, max 100). Use higher values for more comprehensive lists.",
+            "required": False,
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
         }
     ]
+
+    # Default and maximum limit values for LLM flexibility
+    DEFAULT_LIMIT = 20
+    MAX_LIMIT = 100
 
     def __init__(self, bot: Any):
         """Initialize the stats command.
@@ -335,6 +348,46 @@ class StatsCommand(BaseCommand):
         """
         return self.translate('commands.stats.help')
 
+    def _parse_limit(self, parts: list[str]) -> int:
+        """Parse limit parameter from command parts.
+
+        Looks for 'limit=N' or 'limit N' patterns in command arguments.
+
+        Args:
+            parts: The split command parts.
+
+        Returns:
+            int: The parsed limit, clamped between 1 and MAX_LIMIT.
+        """
+        limit = self.DEFAULT_LIMIT
+
+        for i, part in enumerate(parts):
+            # Check for 'limit=N' pattern
+            if part.lower().startswith('limit='):
+                try:
+                    limit = int(part.split('=')[1])
+                    break
+                except (ValueError, IndexError):
+                    pass
+            # Check for 'limit N' pattern (limit followed by number)
+            elif part.lower() == 'limit' and i + 1 < len(parts):
+                try:
+                    limit = int(parts[i + 1])
+                    break
+                except ValueError:
+                    pass
+            # Check for standalone numeric argument (when LLM passes just the number)
+            elif part.isdigit() and i > 1:
+                # Only treat as limit if it's after the subcommand
+                try:
+                    limit = int(part)
+                    break
+                except ValueError:
+                    pass
+
+        # Clamp limit between 1 and MAX_LIMIT
+        return max(1, min(limit, self.MAX_LIMIT))
+
     async def execute(self, message: MeshMessage) -> bool:
         """Execute the stats command.
 
@@ -362,18 +415,22 @@ class StatsCommand(BaseCommand):
                 content = content[1:].strip()
 
             parts = content.split()
+
+            # Parse limit parameter from command
+            limit = self._parse_limit(parts)
+
             if len(parts) > 1:
                 subcommand = parts[1].lower()
                 if subcommand in ['messages', 'message']:
-                    response = await self._get_bot_user_leaderboard()
+                    response = await self._get_bot_user_leaderboard(limit=limit)
                 elif subcommand in ['channels', 'channel']:
-                    response = await self._get_channel_leaderboard()
+                    response = await self._get_channel_leaderboard(limit=limit)
                 elif subcommand in ['paths', 'path']:
-                    response = await self._get_path_leaderboard(message)
+                    response = await self._get_path_leaderboard(message, limit=limit)
                 elif subcommand in ['adverts', 'advert', 'advertisements', 'advertisement']:
                     # Check for verbose/hash option
                     show_hashes = len(parts) > 2 and parts[2].lower() in ['hash', 'hashes', 'verbose', 'verb']
-                    response = await self._get_adverts_leaderboard(message, show_hashes=show_hashes)
+                    response = await self._get_adverts_leaderboard(message, show_hashes=show_hashes, limit=limit)
                 else:
                     response = self.translate('commands.stats.unknown_subcommand', subcommand=subcommand)
             else:
@@ -458,8 +515,11 @@ class StatsCommand(BaseCommand):
             self.logger.error(f"Error getting basic stats: {e}")
             return self.translate('commands.stats.error', error=str(e))
 
-    async def _get_bot_user_leaderboard(self) -> str:
+    async def _get_bot_user_leaderboard(self, limit: int = DEFAULT_LIMIT) -> str:
         """Get leaderboard for bot users (people who triggered bot responses).
+
+        Args:
+            limit: Maximum number of results to return.
 
         Returns:
             str: Formatted leaderboard string.
@@ -479,8 +539,8 @@ class StatsCommand(BaseCommand):
                     WHERE timestamp >= ?
                     GROUP BY sender_id
                     ORDER BY count DESC
-                    LIMIT 5
-                ''', (day_ago,))
+                    LIMIT ?
+                ''', (day_ago, limit))
                 top_users = cursor.fetchall()
 
                 # Build response
@@ -499,8 +559,11 @@ class StatsCommand(BaseCommand):
             self.logger.error(f"Error getting bot user leaderboard: {e}")
             return self.translate('commands.stats.error_bot_users', error=str(e))
 
-    async def _get_channel_leaderboard(self) -> str:
+    async def _get_channel_leaderboard(self, limit: int = DEFAULT_LIMIT) -> str:
         """Get leaderboard for channel message activity.
+
+        Args:
+            limit: Maximum number of results to return.
 
         Returns:
             str: Formatted leaderboard string.
@@ -520,8 +583,8 @@ class StatsCommand(BaseCommand):
                     WHERE timestamp >= ? AND channel IS NOT NULL
                     GROUP BY channel
                     ORDER BY message_count DESC
-                    LIMIT 5
-                ''', (day_ago,))
+                    LIMIT ?
+                ''', (day_ago, limit))
                 top_channels = cursor.fetchall()
 
                 # Build compact response
@@ -545,8 +608,12 @@ class StatsCommand(BaseCommand):
             self.logger.error(f"Error getting channel leaderboard: {e}")
             return self.translate('commands.stats.error_channels', error=str(e))
 
-    async def _get_path_leaderboard(self, message: Optional[MeshMessage] = None) -> str:
+    async def _get_path_leaderboard(self, message: Optional[MeshMessage] = None, limit: int = DEFAULT_LIMIT) -> str:
         """Get leaderboard for longest paths seen.
+
+        Args:
+            message: Optional message for dynamic length calculation.
+            limit: Maximum number of results to return.
 
         Returns:
             str: Formatted leaderboard string.
@@ -572,8 +639,8 @@ class StatsCommand(BaseCommand):
                     )
                     GROUP BY sender_id
                     ORDER BY path_length DESC
-                    LIMIT 8
-                ''', (day_ago, day_ago))
+                    LIMIT ?
+                ''', (day_ago, day_ago, limit))
                 longest_paths = cursor.fetchall()
 
                 # Build compact response with length checking
@@ -606,12 +673,18 @@ class StatsCommand(BaseCommand):
             self.logger.error(f"Error getting path leaderboard: {e}")
             return self.translate('commands.stats.error_paths', error=str(e))
 
-    async def _get_adverts_leaderboard(self, message: Optional[MeshMessage] = None, show_hashes: bool = False) -> str:
+    async def _get_adverts_leaderboard(
+        self,
+        message: Optional[MeshMessage] = None,
+        show_hashes: bool = False,
+        limit: int = DEFAULT_LIMIT
+    ) -> str:
         """Get leaderboard for nodes with most unique advert packets in last 24 hours.
 
         Args:
             message: Optional message for dynamic length calculation.
             show_hashes: If True, include packet hashes in output.
+            limit: Maximum number of results to return.
 
         Returns:
             str: Formatted leaderboard string.
@@ -642,8 +715,8 @@ class StatsCommand(BaseCommand):
                             GROUP BY c.public_key, c.name
                             HAVING unique_adverts > 0
                             ORDER BY unique_adverts DESC
-                            LIMIT 20
-                        ''')
+                            LIMIT ?
+                        ''', (limit,))
                         top_nodes = cursor.fetchall()
 
                         # Now get packet hashes for each node
@@ -678,8 +751,8 @@ class StatsCommand(BaseCommand):
                             GROUP BY c.public_key, c.name
                             HAVING unique_adverts > 0
                             ORDER BY unique_adverts DESC
-                            LIMIT 20
-                        ''')
+                            LIMIT ?
+                        ''', (limit,))
                         top_adverts = cursor.fetchall()
                 else:
                     # Fallback: use advert_count from complete_contact_tracking
@@ -691,8 +764,8 @@ class StatsCommand(BaseCommand):
                             FROM complete_contact_tracking
                             WHERE last_advert_timestamp >= datetime('now', '-24 hours')
                             ORDER BY advert_count DESC
-                            LIMIT 20
-                        ''')
+                            LIMIT ?
+                        ''', (limit,))
                         top_nodes = cursor.fetchall()
 
                         # Get packet hashes for each node
@@ -714,8 +787,8 @@ class StatsCommand(BaseCommand):
                             FROM complete_contact_tracking
                             WHERE last_advert_timestamp >= datetime('now', '-24 hours')
                             ORDER BY advert_count DESC
-                            LIMIT 20
-                        ''')
+                            LIMIT ?
+                        ''', (limit,))
                         top_adverts = cursor.fetchall()
 
                 # Build compact response with length checking
