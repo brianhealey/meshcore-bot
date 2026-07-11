@@ -1359,6 +1359,11 @@ enabled = true
 [Help_Command]
 enabled = true
 # channels =
+# How help responds on public channels
+# 'redirect' = Tell user to DM the bot
+# 'brief' = Short list on channel, full help via DM
+# 'full' = Full help on channel (default, backward compatible)
+public_channel_mode = full
 
 [Health_Command]
 enabled = true

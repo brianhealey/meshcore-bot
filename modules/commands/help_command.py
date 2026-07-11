@@ -33,6 +33,9 @@ class HelpCommand(BaseCommand):
         {"name": "command", "description": "Command name for detailed help (optional)"}
     ]
 
+    # Valid public channel modes
+    VALID_PUBLIC_CHANNEL_MODES = {'redirect', 'brief', 'full'}
+
     def __init__(self, bot):
         """Initialize the help command.
 
@@ -41,6 +44,17 @@ class HelpCommand(BaseCommand):
         """
         super().__init__(bot)
         self.help_enabled = self.get_config_value('Help_Command', 'enabled', fallback=True, value_type='bool')
+
+        # Load public_channel_mode config option
+        # Values: 'redirect', 'brief', 'full' (default for backward compat)
+        mode = self.get_config_value('Help_Command', 'public_channel_mode', fallback='full')
+        if mode not in self.VALID_PUBLIC_CHANNEL_MODES:
+            self.logger.warning(
+                f"Invalid public_channel_mode '{mode}', defaulting to 'full'. "
+                f"Valid values: {', '.join(sorted(self.VALID_PUBLIC_CHANNEL_MODES))}"
+            )
+            mode = 'full'
+        self.public_channel_mode = mode
 
     def can_execute(self, message: MeshMessage, skip_channel_check: bool = False) -> bool:
         """Check if this command can be executed with the given message.
