@@ -1377,6 +1377,12 @@ enabled = true
 enabled = true
 # channels =
 
+[Ding_Command]
+enabled = true
+# Custom response text (default: Dong!)
+# response = Dong!
+# channels =
+
 [Cmd_Command]
 enabled = true
 # Optional: override `cmd` output with a link to your full docs page
