@@ -81,6 +81,10 @@ class HelpCommand(BaseCommand):
         """Execute the help command.
 
         Provides either general help (list of commands) or specific help for a command.
+        Behavior on public channels is controlled by public_channel_mode config:
+        - 'redirect': Tell user to DM the bot for help
+        - 'brief': Send short list on channel + full help via DM
+        - 'full': Current behavior (full help on channel)
 
         Args:
             message: The message that triggered the command.
@@ -98,18 +102,97 @@ class HelpCommand(BaseCommand):
             help_text = self.get_specific_help(command_name, message)
             await self.send_response(message, help_text)
         else:
-            # General help - show list of all commands
-            # Build command list and manually chunk it
-            command_list = self._build_command_list(message)
-            chunks = self._chunk_command_list(command_list, message)
-
-            # Send chunked response
-            if len(chunks) == 1:
-                await self.send_response(message, chunks[0])
-            else:
-                await self.send_response_chunked(message, chunks)
+            # General help - apply public_channel_mode logic
+            await self._handle_general_help(message)
 
         return True
+
+    async def _handle_general_help(self, message: MeshMessage) -> None:
+        """Handle general help request based on public_channel_mode config.
+
+        Args:
+            message: The message that triggered the command.
+        """
+        # If this is a DM, always send full help
+        if message.is_dm:
+            await self._send_full_help(message)
+            return
+
+        # On channels, apply public_channel_mode
+        if self.public_channel_mode == 'redirect':
+            # Tell user to DM the bot for help
+            await self.send_response(message, "Send !help to me in a DM.")
+
+        elif self.public_channel_mode == 'brief':
+            # Send short list on channel + full via DM
+            brief_list = self._get_brief_help(message)
+            await self.send_response(message, brief_list)
+
+            # Send full help via DM
+            await self._send_full_help_via_dm(message)
+
+        else:
+            # 'full' mode - current behavior
+            await self._send_full_help(message)
+
+    def _get_brief_help(self, message: MeshMessage) -> str:
+        """Get brief help text for channel responses.
+
+        Args:
+            message: The message for context.
+
+        Returns:
+            str: Brief help text with popular commands.
+        """
+        # Get a short list of popular commands (max 5)
+        commands = self._build_command_list(message)
+        popular = commands[:5] if len(commands) > 5 else commands
+        popular_list = ', '.join(popular)
+
+        if len(commands) > 5:
+            return f"Commands: {popular_list}... (DM me for full list)"
+        else:
+            return f"Commands: {popular_list}. DM me for details."
+
+    async def _send_full_help(self, message: MeshMessage) -> None:
+        """Send full help response on the same channel/DM.
+
+        Args:
+            message: The message that triggered the command.
+        """
+        command_list = self._build_command_list(message)
+        chunks = self._chunk_command_list(command_list, message)
+
+        if len(chunks) == 1:
+            await self.send_response(message, chunks[0])
+        else:
+            await self.send_response_chunked(message, chunks)
+
+    async def _send_full_help_via_dm(self, message: MeshMessage) -> None:
+        """Send full help via DM to the message sender.
+
+        Args:
+            message: The message that triggered the command.
+        """
+        # Get recipient identifier (prefer pubkey, fall back to sender_id)
+        recipient = message.sender_pubkey or message.sender_id
+        if not recipient:
+            self.logger.warning("Cannot send DM: no sender identifier available")
+            return
+
+        # Build full help content
+        command_list = self._build_command_list(message)
+        help_content = f"Commands: {', '.join(command_list)}. Use 'help <cmd>' for details."
+
+        # Send via command_manager's send_dm
+        try:
+            await self.bot.command_manager.send_dm(
+                recipient_id=recipient,
+                content=help_content,
+                skip_user_rate_limit=True,  # Don't rate limit automated help responses
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to send help DM: {e}")
 
     def get_specific_help(self, command_name: str, message: MeshMessage = None) -> str:
         """Get help text for a specific command.
