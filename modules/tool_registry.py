@@ -55,6 +55,14 @@ TOOL_TRIGGER_KEYWORDS: dict[str, set[str]] = {
         "aurora", "northern lights", "southern lights", "borealis",
         "australis", "geomagnetic", "kp index", "solar wind",
     },
+    "sql_query": {
+        "repeater", "repeaters", "contact", "contacts", "node", "nodes",
+        "closest", "nearest", "farthest", "distance", "heard", "seen",
+        "database", "query", "count", "total", "average", "statistics",
+        "message", "messages", "sent", "received", "advertisement",
+        "advertisements", "adverts", "how many", "list all", "show all",
+        "connection", "connections", "topology", "mesh data",
+    },
 }
 
 
