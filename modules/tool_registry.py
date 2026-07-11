@@ -41,6 +41,9 @@ class ToolRegistry:
         tools_str = self.bot.config.get('LLM_Command', 'available_tools', fallback='wx,airplanes,satpass,path,stats,moon,sun,aurora')
         # Parse comma-separated list and strip whitespace
         tools = {tool.strip() for tool in tools_str.split(',') if tool.strip()}
+        self.logger.debug(
+            f"[TOOL_REGISTRY] Loaded available tools from config: {sorted(tools)}"
+        )
         return tools
 
     def get_available_commands(self) -> dict[str, BaseCommand]:
@@ -111,8 +114,16 @@ class ToolRegistry:
             List of tool schemas in OpenAI function format.
         """
         schemas = []
-        for cmd_name, cmd_instance in self.get_available_commands().items():
+        available_cmds = self.get_available_commands()
+        self.logger.debug(
+            f"[TOOL_REGISTRY] Generating schemas for {len(available_cmds)} tools: "
+            f"{list(available_cmds.keys())}"
+        )
+        for cmd_name, cmd_instance in available_cmds.items():
             schema = self.generate_tool_schema(cmd_instance)
             schemas.append(schema)
-            self.logger.debug(f"Generated tool schema for {cmd_name}")
+            self.logger.debug(
+                f"[TOOL_REGISTRY] Generated schema for '{cmd_name}': "
+                f"desc='{schema.get('function', {}).get('description', '')[:50]}...'"
+            )
         return schemas

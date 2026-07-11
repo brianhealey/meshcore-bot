@@ -277,6 +277,11 @@ class LLMCommand(BaseCommand):
             await self.send_response(message, response)
             return False
 
+        self.logger.debug(
+            f"[LLM] Processing query: sender='{message.sender_id}', "
+            f"channel='{message.channel}', is_dm={message.is_dm}, query='{question[:100]}...'"
+        )
+
         try:
             # Load conversation context
             context_records = await self.context_manager.get_context(
@@ -287,16 +292,31 @@ class LLMCommand(BaseCommand):
             # Convert context to Ollama format
             context = LLMContextManager.format_context_for_ollama(context_records)
 
+            self.logger.debug(
+                f"[LLM] Context loaded: {len(context_records)} records, "
+                f"formatted to {len(context)} messages for Ollama"
+            )
+
             # Query Ollama (with or without tool calling)
             try:
                 if self.enable_tools:
+                    self.logger.info(
+                        f"[LLM] Using tool-enabled mode for query: '{question[:50]}...'"
+                    )
                     llm_response = await self._execute_with_tools(question, context, message)
                 else:
+                    self.logger.info(
+                        f"[LLM] Using direct LLM mode (no tools) for query: '{question[:50]}...'"
+                    )
+                    self.logger.debug(f"[LLM] System prompt: '{self.system_prompt[:100]}...'")
                     llm_response = await self.ollama_client.generate(
                         prompt=question,
                         context=context,
                         system_prompt=self.system_prompt,
                     )
+                self.logger.debug(
+                    f"[LLM] Received response: '{llm_response[:200]}...'"
+                )
             except Exception as e:
                 self.logger.error(f"Ollama generation error: {e}")
                 error_msg = self._add_user_mention(
@@ -321,9 +341,14 @@ class LLMCommand(BaseCommand):
             # Add user mention to response if configured
             response_with_mention = self._add_user_mention(llm_response, message)
 
+            # Use actual max message length for the message type (accounts for username prefix)
+            effective_max_length = self.get_max_message_length(message)
+
             # Hard truncate to maximum possible length before chunking
-            # Reserve space for chunk indicators like [N/M] (about 7 chars per chunk)
-            max_total_length = (self.max_chunk_length * self.max_response_parts) - (self.max_response_parts * 7)
+            # Reserve space for chunk indicators like [N/M] (8 chars per chunk)
+            chunk_overhead = 8  # "[99/99] " worst case
+            max_content_per_chunk = effective_max_length - chunk_overhead
+            max_total_length = max_content_per_chunk * self.max_response_parts
             if len(response_with_mention) > max_total_length:
                 # Truncate at sentence boundary if possible
                 truncated = response_with_mention[:max_total_length]
@@ -334,11 +359,9 @@ class LLMCommand(BaseCommand):
                         truncated = truncated[:last_delim + 1]
                         break
                 response_with_mention = truncated.rstrip()
-
-            # Chunk the response for LoRa compatibility
             chunks = chunk_llm_response(
                 text=response_with_mention,
-                max_chunk_length=self.max_chunk_length,
+                max_chunk_length=effective_max_length,
                 max_parts=self.max_response_parts,
             )
 
@@ -406,11 +429,16 @@ class LLMCommand(BaseCommand):
 
         # Get available tool schemas
         tool_schemas = self.tool_registry.get_all_tool_schemas()
+        tool_names = [t.get("function", {}).get("name", "unknown") for t in tool_schemas]
+        self.logger.debug(
+            f"[LLM_TOOLS] Available tools ({len(tool_schemas)}): {tool_names}"
+        )
 
         # Build messages list for chat API
         messages: list[dict[str, Any]] = []
 
         # Add system prompt
+        self.logger.debug(f"[LLM_TOOLS] System prompt: '{self.system_prompt}'")
         messages.append({
             "role": "system",
             "content": self.system_prompt,
@@ -429,8 +457,16 @@ class LLMCommand(BaseCommand):
         tool_calls_count = 0
         max_iterations = self.max_tools_per_query
 
+        self.logger.info(
+            f"[LLM_TOOLS] Starting tool calling loop: max_iterations={max_iterations}, "
+            f"user_query='{question[:50]}...'"
+        )
+
         for iteration in range(max_iterations + 1):
-            self.logger.debug(f"Tool calling iteration {iteration + 1}/{max_iterations + 1}")
+            self.logger.debug(
+                f"[LLM_TOOLS] Iteration {iteration + 1}/{max_iterations + 1}: "
+                f"tool_calls_so_far={tool_calls_count}"
+            )
 
             # Call LLM with tools
             response = await self.ollama_client.chat(
@@ -447,11 +483,19 @@ class LLMCommand(BaseCommand):
             if not tool_calls:
                 # No tool calls - return final response
                 final_response = response_message.get("content", "")
-                self.logger.debug(f"LLM returned final response (no tool calls): {final_response[:100]}")
+                self.logger.info(
+                    f"[LLM_TOOLS] LLM returned DIRECT RESPONSE (no tools called) at iteration {iteration + 1}"
+                )
+                self.logger.debug(
+                    f"[LLM_TOOLS] Direct response content: '{final_response[:200]}...'"
+                )
                 return final_response
 
             # Execute tool calls
-            self.logger.info(f"LLM requested {len(tool_calls)} tool call(s)")
+            tool_call_names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
+            self.logger.info(
+                f"[LLM_TOOLS] LLM requested TOOL CALLS ({len(tool_calls)}): {tool_call_names}"
+            )
 
             # Add assistant message with tool calls to conversation
             messages.append(response_message)
@@ -461,7 +505,13 @@ class LLMCommand(BaseCommand):
                 tool_name = tool_call.get("function", {}).get("name", "")
                 tool_args = tool_call.get("function", {}).get("arguments", {})
 
-                self.logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+                self.logger.info(
+                    f"[LLM_TOOLS] Invoking tool: '{tool_name}' with args: {tool_args}"
+                )
+                self.logger.debug(
+                    f"[LLM_TOOLS] Tool invocation reason: LLM selected this tool based on "
+                    f"user query '{question[:50]}...' and available tool schemas"
+                )
 
                 try:
                     # Execute the tool
@@ -472,7 +522,9 @@ class LLMCommand(BaseCommand):
                         timeout=self.tool_timeout,
                     )
 
-                    self.logger.debug(f"Tool {tool_name} result: {tool_result[:200]}")
+                    self.logger.debug(
+                        f"[LLM_TOOLS] Tool '{tool_name}' result: {tool_result[:200]}..."
+                    )
 
                     # Add tool result to messages
                     messages.append({
@@ -495,19 +547,22 @@ class LLMCommand(BaseCommand):
             # Check if we've hit the max tool calls limit
             if tool_calls_count >= self.max_tools_per_query:
                 self.logger.warning(
-                    f"Reached max tool calls limit ({self.max_tools_per_query}). "
+                    f"[LLM_TOOLS] Reached max tool calls limit ({self.max_tools_per_query}). "
                     "Forcing final response from LLM."
                 )
                 break
 
         # If we exit the loop without a final response, make one last call without tools
-        self.logger.debug("Making final LLM call without tools")
+        self.logger.info("[LLM_TOOLS] Making final LLM call without tools to get response")
         final_response_obj = await self.ollama_client.chat(
             messages=messages,
             tools=None,  # No tools for final call
         )
 
         final_text = final_response_obj.get("message", {}).get("content", "")
+        self.logger.debug(
+            f"[LLM_TOOLS] Final response after tools: '{final_text[:200]}...'"
+        )
         return final_text
 
     def _extract_question(self, content: str) -> Optional[str]:

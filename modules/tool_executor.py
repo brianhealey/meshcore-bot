@@ -50,18 +50,27 @@ class ToolExecutor:
         Returns:
             str: Command output, or error message if execution failed.
         """
+        self.logger.debug(
+            f"[TOOL_EXEC] Tool execution requested: tool='{tool_name}', "
+            f"args={arguments}, sender='{original_message.sender_id}'"
+        )
+
         # Validate tool is in whitelist
         if tool_name not in self.tool_registry.available_tools:
             error_msg = f"Tool '{tool_name}' is not available. Available tools: {', '.join(sorted(self.tool_registry.available_tools))}"
-            self.logger.warning(error_msg)
+            self.logger.warning(f"[TOOL_EXEC] Tool validation failed: {error_msg}")
             return error_msg
 
         # Get the command instance
         command = self.command_manager.commands.get(tool_name)
         if not command:
             error_msg = f"Command '{tool_name}' not found in command registry"
-            self.logger.error(error_msg)
+            self.logger.error(f"[TOOL_EXEC] Command lookup failed: {error_msg}")
             return error_msg
+
+        self.logger.debug(
+            f"[TOOL_EXEC] Tool validated: tool='{tool_name}' is in whitelist and command exists"
+        )
 
         # Build synthetic message content from arguments
         # For most commands, we just need to construct the command line from arguments
@@ -90,7 +99,8 @@ class ToolExecutor:
 
         # Execute command with timeout
         try:
-            self.logger.info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+            self.logger.info(f"[TOOL_EXEC] Executing tool '{tool_name}' with arguments: {arguments}")
+            self.logger.debug(f"[TOOL_EXEC] Synthetic message content: '{message_content}'")
 
             # Clear last_response before execution
             if hasattr(command, 'last_response'):
@@ -115,21 +125,24 @@ class ToolExecutor:
                 output = self.command_manager._last_response
 
             if output:
-                self.logger.debug(f"Tool '{tool_name}' returned: {output[:100]}...")
+                self.logger.debug(f"[TOOL_EXEC] Tool '{tool_name}' returned output: {output[:200]}...")
+                self.logger.info(f"[TOOL_EXEC] Tool '{tool_name}' executed successfully with output")
                 return str(output)
             elif success:
                 # Command succeeded but no output captured
+                self.logger.info(f"[TOOL_EXEC] Tool '{tool_name}' executed successfully but no output captured")
                 return f"Command '{tool_name}' executed successfully (no output)"
             else:
+                self.logger.warning(f"[TOOL_EXEC] Tool '{tool_name}' returned failure status")
                 return f"Command '{tool_name}' failed to execute"
 
         except asyncio.TimeoutError:
             error_msg = f"Tool '{tool_name}' execution timed out after {timeout} seconds"
-            self.logger.warning(error_msg)
+            self.logger.warning(f"[TOOL_EXEC] {error_msg}")
             return error_msg
         except Exception as e:
             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
-            self.logger.error(error_msg, exc_info=True)
+            self.logger.error(f"[TOOL_EXEC] {error_msg}", exc_info=True)
             return error_msg
 
     def _build_message_content(self, tool_name: str, arguments: dict[str, Any]) -> str:
