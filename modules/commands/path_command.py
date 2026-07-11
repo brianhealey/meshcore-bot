@@ -142,6 +142,11 @@ class PathCommand(BaseCommand):
         self.medium_confidence_symbol = bot.config.get('Path_Command', 'medium_confidence_symbol', fallback='📍')
         self.low_confidence_symbol = bot.config.get('Path_Command', 'low_confidence_symbol', fallback='❓')
 
+        # Show collision warning for 1-byte paths (default: True)
+        self.show_collision_warning = bot.config.getboolean(
+            'Path_Command', 'show_collision_warning', fallback=True
+        )
+
         # Check if "p" shortcut is enabled (on by default)
         self.enable_p_shortcut = bot.config.getboolean('Path_Command', 'enable_p_shortcut', fallback=True)
         if self.enable_p_shortcut:
@@ -201,6 +206,23 @@ class PathCommand(BaseCommand):
             return True
         bph = self._bytes_per_hop_from_nodes_and_routing(node_ids, routing_info)
         return bph >= self.minimum_path_bytes
+
+    def _is_one_byte_path(self, node_ids: list[str]) -> bool:
+        """Check if the path uses 1-byte prefixes (2 hex chars per node).
+
+        1-byte prefixes have a higher risk of hash collisions since there are only
+        256 possible prefix values. This can lead to ambiguous repeater resolution.
+
+        Args:
+            node_ids: List of node prefix hex strings.
+
+        Returns:
+            True if path uses 1-byte prefixes, False otherwise.
+        """
+        if not node_ids:
+            return False
+        # 1-byte = 2 hex characters per node
+        return len(node_ids[0]) == 2
 
     def _format_path_reply_prefix(self, message: MeshMessage) -> str:
         if not self.path_reply_prefix:
@@ -1889,6 +1911,10 @@ class PathCommand(BaseCommand):
 
         # Build response
         response = f"@[{sender_name}] {hop_count} {path_str} route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi {url_part}"
+
+        # Add collision warning for 1-byte paths if enabled
+        if self.show_collision_warning and self._is_one_byte_path(node_ids):
+            response += " \u26a0\ufe0f 1-byte path (may have collisions)"
 
         return response
 

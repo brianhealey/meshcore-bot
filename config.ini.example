@@ -890,6 +890,13 @@ require_path_bytes_failure_response =
 # false: Only respond to "path", "decode", or "route" keywords
 enable_p_shortcut = true
 
+# Show collision warning for 1-byte paths
+# true: Append warning when path uses 1-byte prefixes (may have collisions) (default)
+# false: Never show collision warning
+# 1-byte paths only have 256 possible prefix values, which increases the risk of
+# ambiguous repeater resolution when multiple repeaters share the same prefix.
+show_collision_warning = true
+
 # Optional first line prepended to path command RF replies (Python str.format on the triggering message).
 # Placeholders match Multitest/Keywords-style responses: {sender}, {connection_info}, {path},
 # {timestamp}, {snr}, {rssi}. Only the first RF chunk includes the prefix when the reply is split.
