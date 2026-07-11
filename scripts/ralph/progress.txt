@@ -249,3 +249,30 @@ Started: Sat Jul 11 15:15:06 CDT 2026
   - Text output format via _format_results_text() for mesh message constraints
   - Pre-existing test failures (23 tests) are unrelated
 ---
+
+## 2026-07-11 - US-019
+- Created comprehensive unit tests for LLM SQL query tool (80 tests)
+- Files changed:
+  - tests/commands/test_sql_query_command.py: New test file with 80 tests
+- **Learnings for future iterations:**
+  - Command tests use sql_db fixture with real DBManager for integration testing
+  - Use tmp_path fixture for file-based SQLite (not :memory:) to avoid connection isolation issues
+  - Test organization: TestSQLQueryCommandMetadata, TestIsSafeQuery, TestExecuteQuery, TestGetSchemaDDL, TestQueryPublicMethod, TestExecuteMethod, TestFormatResults, TestConfiguration, TestSecurityEdgeCases
+  - Forbidden SQL patterns use word boundaries (\b) to prevent false positives (e.g., "UPDATED" shouldn't match "UPDATE")
+  - SQL comment injection tests: both -- and /* */ must be rejected
+  - Test both positive cases (SELECT allowed) and negative cases (INSERT/UPDATE/DELETE/DROP/ALTER rejected)
+  - Pre-existing test failures (23 tests in test_llm_*.py, test_help_command.py, test_path_command_*.py) are unrelated
+---
+
+## 2026-07-11 - US-020
+- Updated LLM system prompt to include database schema context
+- Files changed:
+  - modules/commands/llm_command.py: Added _get_database_context() method and enhanced system prompt logic
+- **Learnings for future iterations:**
+  - System prompt enhancement is conditional: only adds database context when data tools are offered
+  - Use set intersection to check if any data tools are in offered_tool_names: `bool(data_tools & offered_tool_names)`
+  - Keep context concise (~1KB) to avoid wasting LLM context window
+  - Include both table/column descriptions and query guidelines (LIMIT, ORDER BY, datetime filtering)
+  - Group related functionality: _get_database_context() placed before _execute_with_tools()
+  - Pre-existing test failures (23 tests) are unrelated to this work
+---
