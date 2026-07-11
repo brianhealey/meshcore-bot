@@ -427,11 +427,24 @@ class LLMCommand(BaseCommand):
                 system_prompt=self.system_prompt,
             )
 
-        # Get available tool schemas
-        tool_schemas = self.tool_registry.get_all_tool_schemas()
+        # Get tool schemas filtered by query intent (keyword matching)
+        # This prevents irrelevant tools from being offered to the LLM
+        tool_schemas = self.tool_registry.get_tool_schemas_for_query(question)
+
+        if not tool_schemas:
+            # No tools match the query - use direct LLM response
+            self.logger.info(
+                "[LLM_TOOLS] No tools match query intent, falling back to direct response"
+            )
+            return await self.ollama_client.generate(
+                prompt=question,
+                context=context,
+                system_prompt=self.system_prompt,
+            )
+
         tool_names = [t.get("function", {}).get("name", "unknown") for t in tool_schemas]
         self.logger.debug(
-            f"[LLM_TOOLS] Available tools ({len(tool_schemas)}): {tool_names}"
+            f"[LLM_TOOLS] Filtered tools for query ({len(tool_schemas)}): {tool_names}"
         )
 
         # Build messages list for chat API
