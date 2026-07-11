@@ -897,6 +897,13 @@ enable_p_shortcut = true
 # ambiguous repeater resolution when multiple repeaters share the same prefix.
 show_collision_warning = true
 
+# Include location names in path output
+# true: Add geographic context labels like "(Leander→Austin)" showing first and last hop locations (default)
+# false: Never show location labels in path output
+# Location data is looked up from repeater contact city/state/country fields.
+# If neither first nor last hop has location data, no label is shown.
+include_location_names = true
+
 # Optional first line prepended to path command RF replies (Python str.format on the triggering message).
 # Placeholders match Multitest/Keywords-style responses: {sender}, {connection_info}, {path},
 # {timestamp}, {snr}, {rssi}. Only the first RF chunk includes the prefix when the reply is split.

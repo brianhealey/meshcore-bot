@@ -147,6 +147,12 @@ class PathCommand(BaseCommand):
             'Path_Command', 'show_collision_warning', fallback=True
         )
 
+        # Include location names in path output (default: True)
+        # Shows geographic context like "(Leander→Austin)" for first and last hop
+        self.include_location_names = bot.config.getboolean(
+            'Path_Command', 'include_location_names', fallback=True
+        )
+
         # Check if "p" shortcut is enabled (on by default)
         self.enable_p_shortcut = bot.config.getboolean('Path_Command', 'enable_p_shortcut', fallback=True)
         if self.enable_p_shortcut:
@@ -643,6 +649,9 @@ class PathCommand(BaseCommand):
                                 'is_active': selected_repeater['is_active'],
                                 'adv_lat': selected_repeater.get('latitude'),
                                 'adv_lon': selected_repeater.get('longitude'),
+                                'city': selected_repeater.get('city'),
+                                'state': selected_repeater.get('state'),
+                                'country': selected_repeater.get('country'),
                                 'found': True,
                                 'collision': False,
                                 'geographic_guess': (selection_method == 'geographic'),
@@ -669,6 +678,9 @@ class PathCommand(BaseCommand):
                             'is_active': repeater['is_active'],
                             'adv_lat': repeater.get('latitude'),
                             'adv_lon': repeater.get('longitude'),
+                            'city': repeater.get('city'),
+                            'state': repeater.get('state'),
+                            'country': repeater.get('country'),
                             'found': True,
                             'collision': False
                         }
@@ -720,6 +732,9 @@ class PathCommand(BaseCommand):
                                 'is_active': match['is_active'],
                                 'adv_lat': match.get('adv_lat'),
                                 'adv_lon': match.get('adv_lon'),
+                                'city': match.get('city'),
+                                'state': match.get('state'),
+                                'country': match.get('country'),
                                 'found': True,
                                 'collision': False,
                                 'source': 'device'
@@ -758,6 +773,27 @@ class PathCommand(BaseCommand):
                             except:
                                 pass
 
+                        # Try to get city/state/country from database for bot
+                        bot_city = None
+                        bot_state = None
+                        bot_country = None
+                        try:
+                            bot_location_query = '''
+                                SELECT city, state, country
+                                FROM complete_contact_tracking
+                                WHERE public_key = ?
+                                LIMIT 1
+                            '''
+                            bot_location_results = self.bot.db_manager.execute_query(
+                                bot_location_query, (bot_pubkey,)
+                            )
+                            if bot_location_results:
+                                bot_city = bot_location_results[0].get('city')
+                                bot_state = bot_location_results[0].get('state')
+                                bot_country = bot_location_results[0].get('country')
+                        except Exception:
+                            pass  # Bot location lookup is optional
+
                         bot_name = device_info.get('adv_name', device_info.get('name', 'Bot'))
                         repeater_info[node_id] = {
                             'name': bot_name,
@@ -767,6 +803,9 @@ class PathCommand(BaseCommand):
                             'is_active': True,
                             'adv_lat': bot_lat,
                             'adv_lon': bot_lon,
+                            'city': bot_city,
+                            'state': bot_state,
+                            'country': bot_country,
                             'found': True,
                             'collision': False,
                             'source': 'bot'
@@ -821,6 +860,77 @@ class PathCommand(BaseCommand):
         except Exception as e:
             self.logger.debug(f"Error getting sender location: {e}")
             return None
+
+    def _get_location_label(self, node_id: str, repeater_info: dict[str, dict[str, Any]]) -> Optional[str]:
+        """Get location label for a node from repeater info.
+
+        Prioritizes city, then state, then country. Falls back gracefully
+        when location data is not available.
+
+        Args:
+            node_id: Node prefix to look up.
+            repeater_info: Dict mapping node IDs to their info (from _lookup_repeater_names).
+
+        Returns:
+            Location label string (e.g., "Leander", "TX", "US") or None if not available.
+        """
+        info = repeater_info.get(node_id)
+        if not info or not info.get('found', False):
+            return None
+
+        # Try to get location from city, state, or country
+        city = info.get('city')
+        state = info.get('state')
+        country = info.get('country')
+
+        # Prefer city, then state, then country
+        if city and city.strip():
+            return city.strip()
+        if state and state.strip():
+            return state.strip()
+        if country and country.strip():
+            return country.strip()
+
+        return None
+
+    def _get_location_labels(
+        self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]]
+    ) -> Optional[str]:
+        """Get location labels string for first and last hop.
+
+        Format: "(Origin→Destination)" where Origin is first hop location
+        and Destination is last hop location. Returns None if neither location
+        is available.
+
+        Args:
+            node_ids: List of node prefix hex strings.
+            repeater_info: Dict mapping node IDs to their info.
+
+        Returns:
+            Location labels string like "(Leander→Austin)" or None.
+        """
+        if len(node_ids) < 2:
+            return None
+
+        first_node = node_ids[0]
+        last_node = node_ids[-1]
+
+        first_location = self._get_location_label(first_node, repeater_info)
+        last_location = self._get_location_label(last_node, repeater_info)
+
+        # If both locations are unknown, return None
+        if not first_location and not last_location:
+            return None
+
+        # Use "?" for unknown locations
+        first_label = first_location or "?"
+        last_label = last_location or "?"
+
+        # Don't show if both are the same (including both being "?")
+        if first_label == last_label:
+            return None
+
+        return f"({first_label}\u2192{last_label})"
 
     def _select_repeater_by_proximity(self, repeaters: list[dict[str, Any]], node_id: str = None, path_context: list[str] = None, sender_location: Optional[tuple[float, float]] = None) -> tuple[Optional[dict[str, Any]], float]:
         """
@@ -1890,11 +2000,18 @@ class PathCommand(BaseCommand):
     async def _format_path_response(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]], sender_name: str) -> str:
         """Format the path decode response in compact format with GeoJSON URL
 
-        New format: @[name] [hop_count] path0,path1,path2 route: ~XX.Xmi, direct: ~XX.Xmi http://da.gd/xxxxx
+        New format: @[name] [hop_count] (Origin→Dest) path0,path1,path2 route: ~XX.Xmi, direct: ~XX.Xmi http://da.gd/xxxxx
         """
-        # Format: @[sender_name] [hop_count] node1,node2,node3
+        # Format: @[sender_name] [hop_count] (location) node1,node2,node3
         hop_count = len(node_ids)
         path_str = ','.join(node_id.lower() for node_id in node_ids)
+
+        # Get location labels if enabled
+        location_part = ""
+        if self.include_location_names:
+            location_labels = self._get_location_labels(node_ids, repeater_info)
+            if location_labels:
+                location_part = f" {location_labels}"
 
         # Calculate distances
         route_distance = self._calculate_route_distance(node_ids, repeater_info)
@@ -1910,7 +2027,7 @@ class PathCommand(BaseCommand):
         url_part = short_url if short_url else "(map unavailable)"
 
         # Build response
-        response = f"@[{sender_name}] {hop_count} {path_str} route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi {url_part}"
+        response = f"@[{sender_name}] [{hop_count}h]{location_part} {path_str} route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi {url_part}"
 
         # Add collision warning for 1-byte paths if enabled
         if self.show_collision_warning and self._is_one_byte_path(node_ids):
