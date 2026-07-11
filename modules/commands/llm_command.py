@@ -394,6 +394,41 @@ class LLMCommand(BaseCommand):
             await self.send_response(message, error_msg)
             return False
 
+    def _get_database_context(self) -> str:
+        """Generate database schema context for LLM system prompt.
+
+        Provides a concise summary of key database tables and columns
+        to help the LLM write appropriate queries.
+
+        Returns:
+            Database schema context string for inclusion in system prompt.
+        """
+        return """
+DATABASE SCHEMA (use with sql_query or repeaters tools):
+
+complete_contact_tracking - All mesh contacts and repeaters
+  Columns: public_key, name, role ('repeater'/'node'/'companion'), first_heard, last_heard,
+           latitude, longitude, city, state, country, firmware_version
+
+message_stats - Message history and statistics
+  Columns: sender_id, channel, content, timestamp, is_dm, hops, snr, rssi, message_type
+
+repeater_adverts - Repeater advertisement observations
+  Columns: repeater_pubkey, repeater_name, observed_at, snr, rssi, hops
+
+mesh_connections - Network topology edges (node-to-node links)
+  Columns: src_node, dst_node, snr, rssi, last_seen, observation_count
+
+daily_stats - Daily aggregated statistics
+  Columns: date, public_key, advert_count
+
+QUERY GUIDELINES:
+- Use appropriate LIMIT based on question (5-10 for "top/closest/recent", 50-100 for analysis)
+- Use ORDER BY for ranking queries (e.g., ORDER BY last_heard DESC for recent)
+- Use datetime('now', '-24 hours') for time filtering
+- For distance queries, use the repeaters tool instead of sql_query
+"""
+
     async def _execute_with_tools(
         self,
         question: str,
@@ -450,11 +485,26 @@ class LLMCommand(BaseCommand):
         # Build messages list for chat API
         messages: list[dict[str, Any]] = []
 
-        # Add system prompt
-        self.logger.debug(f"[LLM_TOOLS] System prompt: '{self.system_prompt}'")
+        # Build enhanced system prompt with database context for tool calling
+        # Check if any data-related tools are being offered (sql_query, repeaters, stats)
+        data_tools = {'sql_query', 'repeaters', 'stats'}
+        offered_tool_names = {t.get("function", {}).get("name", "") for t in tool_schemas}
+        has_data_tools = bool(data_tools & offered_tool_names)
+
+        if has_data_tools:
+            # Include database schema context to help LLM write better queries
+            enhanced_system_prompt = self.system_prompt + self._get_database_context()
+            self.logger.debug(
+                f"[LLM_TOOLS] Enhanced system prompt with database context: "
+                f"'{enhanced_system_prompt[:200]}...'"
+            )
+        else:
+            enhanced_system_prompt = self.system_prompt
+            self.logger.debug(f"[LLM_TOOLS] System prompt: '{self.system_prompt}'")
+
         messages.append({
             "role": "system",
-            "content": self.system_prompt,
+            "content": enhanced_system_prompt,
         })
 
         # Add conversation context
