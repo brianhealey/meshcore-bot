@@ -1554,13 +1554,14 @@ tool_timeout = 10
 #   "When is the next full moon?" → calls moon_command
 #   "What time is sunrise tomorrow?" → calls sun_command
 #   "Is there aurora activity tonight?" → calls aurora_command
-#   "Which repeaters are closest to me?" → calls sql_query to query contacts
+#   "Which repeaters are closest to me?" → calls repeaters with sort_by=distance
 #   "How many messages were sent today?" → calls sql_query to query message_stats
-#   "What repeaters have I heard in the last 24 hours?" → calls sql_query
+#   "What repeaters have I heard in the last 24 hours?" → calls repeaters with sort_by=last_seen
+#   "Show me repeaters with GPS coordinates" → calls repeaters with has_location=true
 #
 # The LLM will automatically detect user intent and invoke the appropriate command(s)
 # to gather information, then formulate a natural language response.
-available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora,sql_query
+available_tools = wx,airplanes,satpass,path,stats,moon,sun,aurora,sql_query,repeaters
 
 # Channels where LLM command is allowed (omit to use global monitor_channels)
 # channels =

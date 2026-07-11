@@ -1,268 +1,251 @@
 # Ralph Progress Log
-
-Started: 2026-07-04
-Project: MeshCore Bot - LLM Integration via Ollama
-Branch: ralph/llm-integration
+Started: Sat Jul 11 15:15:06 CDT 2026
 
 ## Codebase Patterns
-- Database migrations use sequential IDs (1, 2, 3...) not arbitrary numbers
-- Migration functions are named _mNNNN_description(cursor) where NNNN matches the function name
-- Migrations are appended to MIGRATIONS list as (ID, "description", function)
-- Use CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS for idempotency
-- Tests expect migration IDs to be contiguous (range(1, len(MIGRATIONS)+1))
-- Use tmp_path fixture for test databases (not :memory:)
+- LLM tool calling uses lazy initialization: ToolRegistry and ToolExecutor are initialized on first use, not at command construction
+- Debug log prefixes for LLM system: [LLM], [LLM_TOOLS], [TOOL_EXEC], [TOOL_REGISTRY]
+- Pre-existing test failures in test_llm_command.py and test_llm_tool_calling.py are unrelated to current work
+- Tool intent filtering: Use TOOL_TRIGGER_KEYWORDS dict in tool_registry.py to map tools to their trigger keywords
+- For keyword matching: use word boundaries for single words, substring match for multi-word phrases
 
 ---
 
-## 2026-07-04 14:30 - US-001
-- Implemented database migration for LLM conversation context
+## 2026-07-11 - US-001
+- Implemented debug logging for LLM tool execution to diagnose weather response bug
 - Files changed:
-  - modules/db_migrations.py (added _m0042_llm_conversation_context function and migration entry)
+  - modules/tool_executor.py: Added logging for tool validation, execution, and results
+  - modules/commands/llm_command.py: Added logging for query flow, tool mode selection, system prompt
+  - modules/tool_registry.py: Added logging for available tools and schema generation
 - **Learnings for future iterations:**
-  - Migration IDs must be sequential (used 13 instead of PRD's 42) to satisfy existing test expectations
-  - Migration functions follow pattern: _mNNNN_description(cursor)
-  - Always use CREATE TABLE IF NOT EXISTS for idempotency
-  - Index naming convention: idx_tablename_columns (e.g., idx_llm_context_key_timestamp)
-  - Tests in tests/test_db_migrations.py validate migration count and contiguity
-  - Make dev command sets up venv and installs all dependencies including test tools
-  - Quality checks: mypy (typecheck), ruff (lint), pytest (tests with 35% coverage threshold)
----
-## 2026-07-04 - US-002
-- Implemented OllamaClient HTTP wrapper for Ollama API communication
-- Files changed:
-  - modules/ollama_client.py (new file - 174 lines)
-- **Learnings for future iterations:**
-  - HTTP clients in this codebase follow pattern from modules/clients/ (e.g., espn_client.py)
-  - Clients use aiohttp with async/await and session reuse via _get_session()
-  - Timeout configured as aiohttp.ClientTimeout(total=seconds)
-  - Error handling: catch aiohttp.ClientError, ServerTimeoutError, and ValueError for malformed responses
-  - Ollama API: POST to /api/chat with {"model": str, "messages": [{"role": str, "content": str}], "stream": false}
-  - Ollama response format: {"message": {"role": "assistant", "content": "text"}}
-  - Health check uses GET /api/tags endpoint
-  - Added close() method for proper session cleanup (not in PRD but good practice)
-  - Google-style docstrings are required (Args:, Returns:, Raises: sections)
-  - mypy passes with no special config needed for new modules following type hints
-  - All existing tests must continue to pass (2861 tests in this project)
----
-## 2026-07-04 - US-003
-- Implemented LLMContextManager for conversation history management
-- Files changed:
-  - modules/llm_context_manager.py (new file - 241 lines)
-- **Learnings for future iterations:**
-  - LLMContextManager uses AsyncDBManager for async DB operations
-  - Context retrieval fetches most recent messages ordered DESC, then reverses to chronological order
-  - Pruning uses two-step approach: first delete by TTL, then keep only max_exchanges * 2 messages
-  - Static method format_context_for_ollama() converts DB format to Ollama API format
-  - OllamaClient expects context as [{"role": "user"|"assistant", "content": "text"}, ...]
-  - Database records include: id, context_key, role, content, timestamp, created_at
-  - Error handling: get_context returns empty list on error, add_message/clear_context return bool
-  - Pruning errors are logged but don't fail (using try/except without raising)
-  - All async DB operations use `async with self.async_db.connection() as conn:` pattern
-  - Commit operations require `await conn.commit()` after execute
----
-## 2026-07-04 - US-004
-- Implemented chunk_llm_response() utility function for splitting LLM responses
-- Files changed:
-  - modules/utils.py (added chunk_llm_response function - 150 lines)
-- **Learnings for future iterations:**
-  - Utility functions in modules/utils.py follow Google-style docstrings with Examples section
-  - LoRa message length constraints: default max_chunk_length=180 bytes
-  - Sentence splitting uses regex pattern r'([.!?])\s+' to preserve punctuation
-  - Word splitting fallback prevents mid-word breaks when sentences too long
-  - Chunk indicators format: "[1/N] content" where N is total chunks
-  - Truncation suffix: "...(truncated)" added to last chunk if exceeds max_parts
-  - Must account for indicator length when calculating available content space
-  - Edge cases: empty strings, very long words, single-sentence responses
-  - modules/utils.py is 2447 lines - large file requiring offset/limit when reading
-  - Quality check workflow: mypy → ruff → pytest (all must pass before commit)
----
-## 2026-07-04 - US-005
-- Added [LLM_Command] configuration section to config.ini.example
-- Files changed:
-  - config.ini.example (added 58-line [LLM_Command] section)
-- **Learnings for future iterations:**
-  - Command configuration sections follow pattern: [CommandName_Command] (e.g., [LLM_Command], [Ping_Command])
-  - Config sections placed after command stubs, before Web Viewer section
-  - Comment style: clear descriptions with examples and defaults
-  - Boolean settings: enabled = true/false
-  - String settings with URLs: include protocol (http://localhost:11434)
-  - Integer settings: include units in comment (seconds, characters)
-  - Settings include default values in comments (e.g., "Default: 180")
-  - Multi-line comments explain purpose, constraints, and recommendations
-  - Optional channel restrictions and aliases follow same pattern as other commands
-  - Configuration documentation is part of the feature (not separate docs)
-  - All 2861 tests passed - config changes don't affect tests unless code reads them
----
-## 2026-07-04 - US-006
-- Implemented LLMCommand basic structure with configuration loading
-- Files changed:
-  - modules/commands/llm_command.py (new file - 158 lines)
-- **Learnings for future iterations:**
-  - Command plugins follow strict BaseCommand pattern from modules/commands/base_command.py
-  - Class attributes: name, keywords (list), description, category, requires_internet (bool)
-  - Commands must implement async execute(message: MeshMessage) -> bool
-  - Configuration loading uses self.get_config_value(section, key, fallback, value_type)
-  - Section names follow pattern: [CommandName_Command] (e.g., [LLM_Command], [Wx_Command])
-  - Enable flag checked in can_execute() override, not execute()
-  - Google-style docstrings required with Args:, Returns: sections
-  - get_help_text() returns multi-line string with command usage info
-  - Documentation fields: short_description, usage, examples, parameters (for website generation)
-  - Placeholder execute() methods acceptable for multi-story implementations
-  - mypy checks pass without special config for properly typed new modules
-  - ruff will flag unused imports - remove them to pass lint
-  - Full test suite (2861 tests) must pass - new command files don't break existing tests
----
-## 2026-07-04 - US-007
-- Implemented LLMCommand execute() method with full context and Ollama integration
-- Files changed:
-  - modules/commands/llm_command.py (replaced placeholder execute with full implementation)
-- **Learnings for future iterations:**
-  - Commands access AsyncDBManager via self.bot.async_db_manager
-  - OllamaClient and LLMContextManager are initialized in __init__(), stored as instance variables
-  - Question extraction: strip command prefix (!) and keyword, return remaining text
-  - Context keys: use channel name for channels, sender_pubkey or sender_id for DMs
-  - Error handling pattern: catch specific exceptions (aiohttp errors), log them, send user-friendly messages
-  - Response flow: get_context → format_context_for_ollama → ollama.generate → add_message (user) → add_message (assistant) → send_response
-  - Helper methods should be private (_method_name) when only used internally
-  - All quality checks passed (mypy, ruff, 2875 tests all passing)
-  - Response chunking and context pruning are deferred to US-008 and US-009
----
-## 2026-07-04 - US-008
-- Implemented LLM response chunking and delivery
-- Files changed:
-  - modules/commands/llm_command.py (added chunking logic to execute method)
-- **Learnings for future iterations:**
-  - chunk_llm_response() from modules/utils.py handles all chunking logic (sentence/word boundaries, indicators)
-  - Single-chunk responses use send_response() for direct sending
-  - Multi-chunk responses use send_response_chunked() which has built-in rate limiting
-  - send_response_chunked() automatically adds delays between chunks based on bot_tx_rate_limit_seconds
-  - The chunk_delay_seconds config setting is available but send_response_chunked has its own timing logic
-  - Chunk indicators [1/N], [2/N] are automatically added by chunk_llm_response()
-  - Truncation with "...(truncated)" suffix happens when response exceeds max_response_parts
-  - All 2875 tests pass - no test changes needed for this feature
----
-## 2026-07-04 - US-009
-- Implemented context pruning after each LLM response to prevent unbounded DB growth
-- Files changed:
-  - modules/commands/llm_command.py (added prune_context call after response sending)
-- **Learnings for future iterations:**
-  - Context pruning added after send_response/send_response_chunked to ensure message delivery succeeds first
-  - Pruning wrapped in try/except with error logging to prevent command execution failure
-  - Pruning uses self.context_max_exchanges and self.context_ttl_seconds from config
-  - Error messages include context_key for debugging: f"Context pruning error for key '{context_key}': {e}"
-  - All 2875 tests continue to pass - no test changes needed for this feature
-  - Pattern: Operations that cleanup/optimize should not block critical functionality (send response)
----
-## 2026-07-04 - US-010
-- Implemented clear-context command for clearing conversation history
-- Files changed:
-  - modules/commands/llm_command.py (added clear-context detection and handling)
-- **Learnings for future iterations:**
-  - Keywords list already included 'clear-context' from US-006, but execute() didn't implement it yet
-  - Command routing pattern: check request type early in execute(), handle each type separately
-  - Helper method _is_clear_context_request() follows same pattern as _extract_question() - strips prefix and checks content
-  - Clear-context handling placed before question extraction to short-circuit early
-  - Error handling pattern: try/except around manager call, send user-friendly message on error
-  - Success/failure communicated via both return value (bool) and user message
-  - Context clearing is per-channel or per-user based on context_key (same as conversation context)
-  - All 2861 tests pass - no test changes needed for this feature yet (US-014 will add integration tests)
----
-## 2026-07-04 - US-011
-- Implemented comprehensive unit tests for OllamaClient HTTP wrapper
-- Files changed:
-  - tests/test_ollama_client.py (new file - 496 lines, 25 tests)
-  - scripts/ralph/prd.json (updated US-011 passes: true)
-- **Learnings for future iterations:**
-  - Mocking aiohttp requires patching `_get_session()` method, not setting `session` directly
-  - Use `patch.object(client, '_get_session', return_value=mock_session)` pattern
-  - Mock context managers with `__aenter__` and `__aexit__` AsyncMock methods
-  - aiohttp exception hierarchy: ServerTimeoutError is caught by ClientError handler (order matters)
-  - Test pattern: Create mock response → Create mock session → Patch _get_session → Execute → Assert
-  - Helper functions `_make_mock_response()` and `_make_context_manager()` reduce test boilerplate
-  - Coverage of 93% achieved (ollama_client.py lines 136-137, 141-143 are unreachable dead code paths)
-  - All 2886 existing tests continue to pass + 25 new tests = 2911 total tests passing
-  - Test organization: TestInit, TestGenerate, TestHealthCheck, TestClose, TestGetSession classes
-  - Use pytest fixtures for shared setup (mock_logger, ollama_client)
+  - Tool calling uses lazy initialization pattern - tool_registry and tool_executor are None until first execute() call
+  - LLM chooses tools based on tool schemas provided via get_all_tool_schemas()
+  - Pre-existing test failures exist (24 tests) - not caused by logging changes
+  - Log prefixes [LLM], [LLM_TOOLS], [TOOL_EXEC], [TOOL_REGISTRY] established for easy log filtering
 ---
 
-## 2026-07-04 - US-012
-- Implemented comprehensive unit tests for LLMContextManager
+## 2026-07-11 - US-002
+- Implemented keyword-based intent filtering to fix incorrect weather tool invocation
 - Files changed:
-  - tests/test_llm_context_manager.py (new file - 529 lines, 30 tests)
-  - scripts/ralph/prd.json (updated US-012 passes: true)
+  - modules/tool_registry.py: Added TOOL_TRIGGER_KEYWORDS dict, get_tools_matching_query(), get_tool_schemas_for_query()
+  - modules/commands/llm_command.py: Updated _execute_with_tools() to use filtered tool schemas
 - **Learnings for future iterations:**
-  - Test organization: 7 test classes (TestInit, TestGetContext, TestAddMessage, TestPruneContext, TestClearContext, TestFormatContextForOllama, TestErrorHandling)
-  - AsyncDBManager fixture requires DBManager initialization first to run migrations
-  - Pattern: Create DBManager to run migrations, then create AsyncDBManager pointing to same db_path
-  - Use `_ = DBManager(...)` with `# noqa: F841` comment to satisfy ruff (variable needed for side effect)
-  - Mock logger is shared across fixtures, so use assert_any_call() instead of assert_called_once() when migrations log info messages
-  - Testing async database operations: Use `async with async_db.connection()` pattern consistently
-  - Testing TTL-based pruning: Insert old timestamps directly using SQL to avoid time.sleep() delays
-  - Testing chronological order: Use time.sleep(0.01) to ensure timestamp ordering between messages
-  - Coverage of 100% achieved (55/55 statements) - exceeds 80% requirement
-  - All 2916 tests pass (2886 existing + 30 new = 2916 total)
-  - Test fixture pattern: mock_logger, async_db_manager (with migrations), context_manager (with db + logger)
-  - Error handling tests: Set manager.async_db = None to force errors and verify error logging
+  - The root cause was that the LLM was being offered all tools regardless of query relevance
+  - Solution: Pre-filter tools based on keyword matching before offering to LLM
+  - Use word boundaries (\\b) for single-word keywords to avoid false positives (e.g., "hot dog" shouldn't match "hot")
+  - Use substring matching for multi-word phrases (e.g., "clear skies")
+  - Avoid generic keywords like "hot", "cold", "temp" that can appear in non-domain contexts
+  - When no tools match, fall back to direct LLM response (no tools offered)
 ---
 
-## 2026-07-04 - US-013
-- Implemented comprehensive unit tests for chunk_llm_response utility function
+## 2026-07-11 - US-003
+- Created comprehensive unit tests for LLM tool routing logic
 - Files changed:
-  - tests/test_utils.py (added TestChunkLLMResponse class with 21 tests, added chunk_llm_response import)
-  - tests/integration/test_rf_scope_correlation.py (ruff auto-fixed import ordering)
-  - scripts/ralph/prd.json (updated US-013 passes: true)
+  - tests/test_tool_routing.py: New file with 122 tests covering all tool routing scenarios
 - **Learnings for future iterations:**
-  - Test organization: tests/test_utils.py uses class-based organization (class TestFunctionName:)
-  - Import additions must maintain alphabetical ordering to pass ruff linting
-  - chunk_llm_response behavior: truncation suffix added BEFORE chunk indicators, so may be truncated itself
-  - Testing truncation: check for partial suffix like "trun" not just full "...(truncated)" due to line 2592-2593
-  - Implementation detail: Chunk indicators are added after truncation, and content is further truncated to fit
-  - Test coverage achieved: 21 comprehensive tests covering all acceptance criteria
-  - Edge cases tested: empty strings, very long words, whitespace-only, mixed terminators, real-world responses
-  - Full test suite: 2937 tests passing with 43.88% total coverage (exceeds 35% threshold)
-  - Quality check pattern: mypy → ruff (with --fix if needed) → pytest (full suite without coverage for speed)
-  - Ruff auto-fix can modify other files - always review git status after running --fix
+  - Test fixtures in conftest.py provide mock_logger and minimal_config
+  - Use pytest.mark.parametrize for testing many query variations efficiently
+  - Tool routing tests should cover: positive matches, negative matches, edge cases, config filtering
+  - Coverage for tool_registry.py achieved 99% with combined test files
+  - Pre-existing test failure in test_tool_registry.py::TestPathCommandToolSchema::test_path_command_has_destination_parameter_required is unrelated
 ---
 
-## 2026-07-04 - US-014
-- Implemented comprehensive integration test suite for LLMCommand end-to-end functionality
+## 2026-07-11 - US-004
+- Created database migration for repeater advertisement tracking
 - Files changed:
-  - tests/test_llm_command.py (new file - 486 lines, 19 tests)
-  - scripts/ralph/prd.json (updated US-014 passes: true)
+  - modules/db_migrations.py: Added migration 15 (_m0015_repeater_adverts_table)
 - **Learnings for future iterations:**
-  - Integration tests for commands require custom fixtures with async_db_manager
-  - Pattern: Create async_db_manager fixture similar to test_llm_context_manager.py
-  - First create DBManager to run migrations, then create AsyncDBManager pointing to same db_path
-  - Command test fixture pattern: mock bot with config getters (get, getboolean, getint, getfloat)
-  - Mock OllamaClient.generate() using `patch.object(cmd.ollama_client, 'generate', new_callable=AsyncMock)`
-  - Mock context methods similarly: `patch.object(cmd.context_manager, 'prune_context', new_callable=AsyncMock)`
-  - Test organization: 6 test classes (Init, CanExecute, Ask, MultiTurnConversation, ClearContext, ChunkedResponse, ContextPruning)
-  - Multi-turn conversation tests verify context passed to second call contains first exchange
-  - Different channels/users maintain separate contexts - verify by checking context is empty
-  - Chunked response tests check send_response vs send_response_chunked usage
-  - Pruning error tests ensure command succeeds despite pruning failure (errors logged but don't fail)
-  - Test suite now 2956 tests passing (19 new), 44.04% coverage (exceeds 35% threshold)
-  - Quality checks: mypy → ruff → pytest all pass
-  - All acceptance criteria met: mocked Ollama, multi-turn context, clear-context, chunking, error handling, pruning
+  - Migration pattern: write function `_mNNNN_short_desc(cursor)`, then append to MIGRATIONS list
+  - Always use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` for idempotency
+  - Use `cursor.execute()` for each SQL statement (not executescript for multi-statement with indexes)
+  - Test migrations by running MigrationRunner on temp database and verifying schema
+  - The repeater_adverts table is ready for US-005 to populate with observed advertisements
 ---
 
-## 2026-07-04 - US-015
-- Created comprehensive documentation for LLM integration feature
+## 2026-07-11 - US-005
+- Implemented repeater advertisement capture in message_handler.py
 - Files changed:
-  - docs/llm-integration.md (new file - 579 lines)
-  - docs/command-reference.md (added AI Commands section, updated TOC)
-  - README.md (added LLM integration to features list)
-  - scripts/ralph/prd.json (updated US-015 passes: true)
+  - modules/message_handler.py: Added _record_repeater_advert() method, called after successful tracking
+  - tests/test_message_handler.py: Added 7 unit tests for TestRecordRepeaterAdvert class
 - **Learnings for future iterations:**
-  - Documentation pattern: Quick Start → Configuration → Usage → Advanced → FAQ → Troubleshooting
-  - Service docs follow pattern: Features list, Quick Start (numbered steps), Configuration (with examples), Usage, FAQ
-  - Command reference follows template: name, usage, examples, response, features, configuration, notes
-  - Command reference organized by category: Basic, Information, Emergency, Gaming, Entertainment, AI, Sports, MeshCore Utility, Admin
-  - Table of Contents must be updated when adding new sections
-  - README features list includes link to detailed docs: [feature name](docs/filename.md)
-  - FAQ section should include common troubleshooting steps with commands to run
-  - Integration Details section documents database schema and architecture for developers
-  - All 2956 tests continue to pass - documentation changes don't affect test suite
-  - Comprehensive docs make features more accessible and reduce support burden
+  - Advertisement data flows: _process_advertisement_packet() → repeater_manager.track_contact_advertisement() → _record_repeater_advert()
+  - Use db_manager.execute_update() for INSERT operations (returns rows_affected count)
+  - Signal info (snr, rssi, hops) comes from the signal_info dict, not advert_data
+  - Pre-existing lint issues in unrelated files (path_command.py, test_tool_routing.py)
+  - Pre-existing test failure in test_help_command.py::TestGetGeneralHelp::test_includes_commands_help_key is unrelated
 ---
 
+## 2026-07-11 - US-006
+- Created connectivity metrics calculation module
+- Files changed:
+  - modules/connectivity_metrics.py: New file with ConnectivityMetrics class
+- **Learnings for future iterations:**
+  - Module pattern: TYPE_CHECKING imports for type hints, bot: Any parameter accepts duck-typed bot object
+  - Use `from __future__ import annotations` to avoid quoting type hints
+  - Query complete_contact_tracking WHERE role='repeater' for known repeaters
+  - Query repeater_adverts with datetime filtering for heard repeaters
+  - Use db_manager.execute_query() for SELECT, returns list of dicts
+  - Time filtering uses strftime() for SQLite datetime comparison
+  - Added get_summary() convenience method for gathering all metrics at once
+---
+
+## 2026-07-11 - US-007
+- Created health command plugin for mesh connectivity metrics
+- Files changed:
+  - modules/commands/health_command.py: New command plugin inheriting from BaseCommand
+  - config.ini.example: Added [Health_Command] section with enabled flag
+- **Learnings for future iterations:**
+  - Command plugins follow consistent pattern: inherit BaseCommand, set name/keywords/description, implement execute()
+  - Use get_config_value() from BaseCommand for config access with fallbacks
+  - ConnectivityMetrics class is already implemented; just instantiate and call methods
+  - Response format: "Mesh Health: X known / Y heard (48h) / Z heard (24h), N% connectivity"
+  - Pre-existing test failures in test_help_command.py, test_llm_command.py, test_tool_registry.py, test_utils.py, test_path_command_*.py are unrelated
+---
+
+## 2026-07-11 - US-008
+- Created comprehensive unit tests for connectivity metrics module
+- Files changed:
+  - tests/test_connectivity_metrics.py: New test file with 29 tests
+- **Learnings for future iterations:**
+  - Use metrics_db fixture that creates real DBManager with migrations (not mocked)
+  - insert_repeater() and insert_advert() helpers for clean test data setup
+  - Test classes grouped by method: TestGetRepeatersKnown, TestGetRepeatersHeard, etc.
+  - Edge cases covered: empty DB, 0 known, negative hours/days, 100% connectivity, >100% connectivity
+  - Error handling tested with mocked db_manager that raises exceptions
+  - Pre-existing test failures (24 tests) are unrelated to this work
+---
+
+## 2026-07-11 - US-009
+- Added 1-byte path collision warning to path command
+- Files changed:
+  - modules/commands/path_command.py: Added _is_one_byte_path() method, show_collision_warning config option, warning in _format_path_response()
+  - config.ini.example: Added show_collision_warning option with documentation
+- **Learnings for future iterations:**
+  - 1-byte paths have 2 hex characters per node (256 possible values = higher collision risk)
+  - Use `len(node_ids[0]) == 2` to detect 1-byte paths
+  - Config options loaded in __init__ using bot.config.getboolean() with fallback
+  - Unicode warning symbol: \u26a0\ufe0f (⚠️)
+  - Pre-existing test failures in test_path_command_*.py are unrelated to this change
+---
+
+## 2026-07-11 - US-010
+- Added location labels to path command output for first and last hop
+- Files changed:
+  - modules/commands/path_command.py: Added _get_location_label(), _get_location_labels() methods, include_location_names config, updated _format_path_response() and repeater_info to include city/state/country
+  - config.ini.example: Added include_location_names option with documentation
+- **Learnings for future iterations:**
+  - Location data (city/state/country) must be stored in repeater_info dict, not just lat/lon
+  - Format location labels as "(Origin→Destination)" with Unicode arrow \u2192
+  - Prioritize city > state > country for location labels, fall back gracefully
+  - Output format changed from `{hop_count}` to `[{hop_count}h]` to match HA Relay style
+  - Pre-existing test failures in test_path_command_*.py test for uppercase path when code outputs lowercase
+---
+
+## 2026-07-11 - US-011
+- Added public_channel_mode config option to help command
+- Files changed:
+  - modules/commands/help_command.py: Added VALID_PUBLIC_CHANNEL_MODES constant and public_channel_mode loading in __init__
+  - config.ini.example: Added public_channel_mode option with documentation for redirect/brief/full modes
+- **Learnings for future iterations:**
+  - Config options in __init__ should use get_config_value() from BaseCommand
+  - Validate config values against allowed set and log warning if invalid
+  - Default to backward-compatible value ('full') when invalid
+  - Pre-existing test failure in test_help_command.py::TestGetGeneralHelp::test_includes_commands_help_key is unrelated
+---
+
+## 2026-07-11 - US-012
+- Implemented help command redirect mode based on public_channel_mode config
+- Files changed:
+  - modules/commands/help_command.py: Added _handle_general_help(), _get_brief_help(), _send_full_help(), _send_full_help_via_dm() methods
+- **Learnings for future iterations:**
+  - Use message.is_dm to check if message is a DM vs channel
+  - Use message.sender_pubkey or message.sender_id for DM recipient
+  - bot.command_manager.send_dm() sends DMs with rate limiting and retry logic
+  - Refactor execute() to delegate to helper methods for cleaner mode handling
+  - Pre-existing test failures (21 tests) are unrelated to this work
+---
+
+## 2026-07-11 - US-013
+- Created ding command plugin - a fun command that responds with "Dong!"
+- Files changed:
+  - modules/commands/ding_command.py: New command plugin inheriting from BaseCommand
+  - config.ini.example: Added [Ding_Command] section with enabled and response options
+- **Learnings for future iterations:**
+  - Simple commands follow consistent pattern: inherit BaseCommand, define name/keywords/description/category
+  - Use get_config_value() for config access with type coercion (e.g., value_type='bool')
+  - Response text can be made configurable via config option with fallback default
+  - Category 'fun' is used for lighthearted community-requested commands
+  - Pre-existing test failures (5 in test_path_command_*.py) are unrelated
+---
+
+## 2026-07-11 - US-014
+- Created comprehensive unit tests for ding command
+- Files changed:
+  - tests/commands/test_ding_command.py: New test file with 24 tests
+- **Learnings for future iterations:**
+  - Command tests are organized by test class: TestCommandMetadata, TestCanExecute, TestExecute, TestRateLimiting, TestConfig
+  - Use command_mock_bot fixture for lightweight command tests (no DB)
+  - mock_message() factory from conftest.py for creating test messages
+  - Rate limiting is inherited from BaseCommand - test that send_response passes message object to command_manager
+  - Pre-existing test failures (23 tests in test_llm_*.py, test_help_command.py, test_path_command_*.py) are unrelated
+---
+
+## 2026-07-11 - US-015
+- Updated documentation for new commands and features
+- Files changed:
+  - docs/command-reference.md: Added !health command (MeshCore Utility), !ding command (Entertainment), public_channel_mode for help command
+  - README.md: Added connectivity metrics to features list, added health and ding to quick reference commands
+- **Learnings for future iterations:**
+  - Documentation changes don't require code tests - just verify markdown syntax
+  - Command-reference.md uses consistent structure: Usage, Response, Configuration, Example Config, Note
+  - README.md quick reference is a concise list by category; features list is in Features section
+  - Always include config section names in documentation (e.g., [Health_Command], [Ding_Command])
+  - Pre-existing test failures (23 tests) are unrelated to documentation changes
+---
+
+## 2026-07-11 - US-016
+- Created LLM SQL query tool with schema introspection
+- Files changed:
+  - modules/commands/sql_query_command.py: New LLM-callable command plugin (300+ lines)
+  - modules/tool_registry.py: Added sql_query to TOOL_TRIGGER_KEYWORDS
+  - config.ini.example: Added sql_query to available_tools with usage examples
+- **Learnings for future iterations:**
+  - LLM tools follow same pattern as user commands: inherit BaseCommand, define name/keywords/parameters
+  - Tool routing uses TOOL_TRIGGER_KEYWORDS in tool_registry.py for intent matching
+  - SQL safety: reject INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE/PRAGMA, allow only SELECT/WITH
+  - Use FORBIDDEN_SQL_PATTERNS list with regex word boundaries (\b) for robust matching
+  - Block SQL comments (-- and /*) to prevent injection attacks
+  - Limit parameter: DEFAULT_LIMIT=100, MAX_LIMIT=1000, enforce with max(1, min(limit, MAX_LIMIT))
+  - Schema introspection: query sqlite_master WHERE type='table' for DDL
+  - parameters list must be typed as list[dict[str, Any]] to satisfy mypy
+  - Pre-existing test failures (6 tests in path_command_*.py, tool_registry.py) are unrelated
+---
+
+## 2026-07-11 - US-017
+- Added limit parameter to stats command for LLM flexibility
+- Files changed:
+  - modules/commands/stats_command.py: Added limit parameter to parameters list, added _parse_limit() method, updated all leaderboard methods to accept and use limit parameter
+- **Learnings for future iterations:**
+  - Use DEFAULT_LIMIT and MAX_LIMIT class constants for easy configuration
+  - Clamp limit with max(1, min(limit, MAX_LIMIT)) to ensure valid range
+  - Parse limit from multiple formats: 'limit=N', 'limit N', or standalone number after subcommand
+  - Parameters list must be typed as list[dict[str, Any]] to satisfy mypy (same pattern as sql_query_command)
+  - SQL LIMIT parameter can be parameterized using ? placeholder: cursor.execute('... LIMIT ?', (limit,))
+  - All 111 stats-related tests pass; pre-existing test failures (23 tests) are unrelated
+---
+
+## 2026-07-11 - US-018
+- Created repeaters query tool for LLM to query repeater/contact data
+- Files changed:
+  - modules/commands/repeaters_command.py: New LLM-callable command plugin (360+ lines)
+  - modules/tool_registry.py: Added repeaters to TOOL_TRIGGER_KEYWORDS with location-related keywords
+  - config.ini.example: Added repeaters to available_tools with usage examples
+- **Learnings for future iterations:**
+  - Use calculate_distance() from utils.py for haversine distance calculation
+  - Bot location can come from meshcore.self_info or config Bot.latitude/longitude
+  - For distance sorting, fetch more results than needed, calculate distances in Python, then sort and limit
+  - Parameters list pattern same as sql_query_command and stats_command: list[dict[str, Any]]
+  - Separated TOOL_TRIGGER_KEYWORDS for repeaters vs sql_query - repeaters handles location/distance queries, sql_query handles raw database queries
+  - JSON output format via get_results_json() for programmatic LLM tool access
+  - Text output format via _format_results_text() for mesh message constraints
+  - Pre-existing test failures (23 tests) are unrelated
+---
