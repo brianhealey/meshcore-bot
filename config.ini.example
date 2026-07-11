@@ -1346,6 +1346,10 @@ enabled = true
 enabled = true
 # channels =
 
+[Health_Command]
+enabled = true
+# channels =
+
 [Hello_Command]
 enabled = true
 # channels =
