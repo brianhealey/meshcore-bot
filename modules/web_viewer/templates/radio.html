@@ -1207,7 +1207,7 @@ class RadioManager {
                 const pollData = await pollResp.json();
 
                 if (pollData.status === 'completed') {
-                    result = pollData.result || {};
+                    result = pollData.result_data || {};
                     break;
                 } else if (pollData.status === 'failed') {
                     this.setAdvancedAlert('danger', pollData.error || 'Path mode read failed');
