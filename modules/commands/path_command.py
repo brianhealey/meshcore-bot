@@ -1999,7 +1999,8 @@ class PathCommand(BaseCommand):
     async def _format_path_response(self, node_ids: list[str], repeater_info: dict[str, dict[str, Any]], sender_name: str) -> str:
         """Format the path decode response in compact format with GeoJSON URL
 
-        New format: @[name] [hop_count] (Origin→Dest) path0,path1,path2 route: ~XX.Xmi, direct: ~XX.Xmi http://da.gd/xxxxx
+        New format: @[name] [hop_count] (Origin→Dest) path0,path1,path2 route: ~XX.Xmi, direct: ~XX.Xmi (mapped/total) http://da.gd/xxxxx
+        When route distance is 0 or few nodes are mapped, only show direct distance.
         """
         # Format: @[sender_name] [hop_count] (location) node1,node2,node3
         hop_count = len(node_ids)
@@ -2012,21 +2013,46 @@ class PathCommand(BaseCommand):
             if location_labels:
                 location_part = f" {location_labels}"
 
+        # Count nodes with valid coordinates
+        nodes_with_coords = 0
+        for node_id in node_ids:
+            info = repeater_info.get(node_id, {})
+            lat = info.get('adv_lat')
+            lon = info.get('adv_lon')
+            if lat is not None and lon is not None and lat != 0.0 and lon != 0.0:
+                nodes_with_coords += 1
+
         # Calculate distances
         route_distance = self._calculate_route_distance(node_ids, repeater_info)
         direct_distance = self._calculate_direct_distance(node_ids, repeater_info)
 
-        # Generate GeoJSON
-        geojson = self._generate_geojson(node_ids, repeater_info)
-        geojson_str = json.dumps(geojson, separators=(',', ':'))  # Compact JSON
-        geojson_url = f"https://geojson.io/#data=data:application/json,{quote(geojson_str)}"
+        # Generate GeoJSON only if we have at least 2 points
+        url_part = ""
+        if nodes_with_coords >= 2:
+            geojson = self._generate_geojson(node_ids, repeater_info)
+            geojson_str = json.dumps(geojson, separators=(',', ':'))  # Compact JSON
+            geojson_url = f"https://geojson.io/#data=data:application/json,{quote(geojson_str)}"
 
-        # Shorten the URL
-        short_url = await self._shorten_url(geojson_url)
-        url_part = short_url if short_url else "(map unavailable)"
+            # Shorten the URL
+            short_url = await self._shorten_url(geojson_url)
+            url_part = f" {short_url}" if short_url else ""
+
+        # Build distance part - show route only if meaningful (non-zero and most nodes mapped)
+        if route_distance > 0 and nodes_with_coords >= hop_count - 1:
+            # Good coverage - show both distances
+            distance_part = f"route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi"
+        elif direct_distance > 0:
+            # Sparse coverage - show direct distance and ratio
+            if nodes_with_coords < hop_count:
+                distance_part = f"direct: ~{direct_distance:.1f}mi ({nodes_with_coords}/{hop_count})"
+            else:
+                distance_part = f"direct: ~{direct_distance:.1f}mi"
+        else:
+            # No distances available
+            distance_part = f"({nodes_with_coords}/{hop_count} mapped)"
 
         # Build response
-        response = f"@[{sender_name}] [{hop_count}h]{location_part} {path_str} route: ~{route_distance:.1f}mi, direct: ~{direct_distance:.1f}mi {url_part}"
+        response = f"@[{sender_name}] [{hop_count}h]{location_part} {path_str} {distance_part}{url_part}"
 
         # Add collision warning for 1-byte paths if enabled
         if self.show_collision_warning and self._is_one_byte_path(node_ids):

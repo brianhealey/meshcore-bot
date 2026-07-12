@@ -46,15 +46,29 @@ class TestPathCommandFormatPathResponseByteCap:
 
     @pytest.mark.asyncio
     async def test_format_includes_sender_mention_and_hop_count(self, path_cmd):
-        """New format: @[sender] hop_count path route: ~Xmi, direct: ~Xmi url."""
+        """New format: @[sender] hop_count path with distances when coordinates available."""
+        node_ids = ["AB", "CD"]
+        # Provide coordinates so distances can be calculated
+        repeater_info = {
+            "AB": {"found": True, "adv_lat": 30.0, "adv_lon": -97.0},
+            "CD": {"found": True, "adv_lat": 30.1, "adv_lon": -97.1}
+        }
+        with patch.object(path_cmd, '_shorten_url', new_callable=AsyncMock, return_value="https://da.gd/test"):
+            raw = await path_cmd._format_path_response(node_ids, repeater_info, "TestUser")
+        assert "@[TestUser]" in raw
+        assert "ab" in raw.lower()  # node_ids are lowercased
+        # With coordinates, should show distances
+        assert "direct:" in raw or "route:" in raw
+
+    @pytest.mark.asyncio
+    async def test_format_shows_mapped_ratio_when_no_coords(self, path_cmd):
+        """When nodes lack coordinates, show mapped/total ratio."""
         node_ids = ["AB"]
         repeater_info = {"AB": {"found": False}}
         with patch.object(path_cmd, '_shorten_url', new_callable=AsyncMock, return_value="https://da.gd/test"):
             raw = await path_cmd._format_path_response(node_ids, repeater_info, "TestUser")
         assert "@[TestUser]" in raw
-        assert "ab" in raw.lower()  # node_ids are lowercased
-        assert "route:" in raw
-        assert "direct:" in raw
+        assert "(0/1 mapped)" in raw
 
 
 class MockTranslate:
