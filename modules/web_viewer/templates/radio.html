@@ -1059,7 +1059,9 @@ class RadioManager {
         const impactText = document.getElementById('pathModeImpactText');
 
         try {
-            const resp = await fetch(`/api/radio/path-mode/impact?target=${targetMode}`);
+            const resp = await fetch(`/api/radio/path-mode/impact?target=${targetMode}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
             const data = await resp.json();
             if (resp.ok && data.affected_contacts > 0) {
                 impactText.textContent = `Warning: ${data.affected_contacts} contacts and ${data.affected_paths} paths will be affected by this change.`;
@@ -1086,7 +1088,7 @@ class RadioManager {
             // Step 1: Queue the write operation
             const queueResp = await fetch('/api/radio/path-mode', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ prefix_bytes: targetBytes })
             });
             const queueData = await queueResp.json();
@@ -1110,7 +1112,9 @@ class RadioManager {
 
             while (attempts < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, pollInterval));
-                const pollResp = await fetch(`/api/channel-operations/${opId}`);
+                const pollResp = await fetch(`/api/channel-operations/${opId}`, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
                 const pollData = await pollResp.json();
 
                 if (pollData.status === 'completed') {
@@ -1161,7 +1165,9 @@ class RadioManager {
 
         try {
             // Step 1: Queue the operation
-            const queueResp = await fetch('/api/radio/path-mode');
+            const queueResp = await fetch('/api/radio/path-mode', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
             const queueData = await queueResp.json();
 
             if (!queueResp.ok) {
@@ -1195,7 +1201,9 @@ class RadioManager {
 
             while (attempts < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, pollInterval));
-                const pollResp = await fetch(`/api/channel-operations/${opId}`);
+                const pollResp = await fetch(`/api/channel-operations/${opId}`, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
                 const pollData = await pollResp.json();
 
                 if (pollData.status === 'completed') {
