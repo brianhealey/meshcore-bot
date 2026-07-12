@@ -1,342 +1,200 @@
 {
   "project": "MeshCore Bot",
-  "branchName": "ralph/bot-improvements-july-2026",
-  "description": "Bot Improvements July 2026 - LLM bug fix, path command improvements, connectivity metrics, DM-based help, and fun commands based on community feedback",
+  "branchName": "ralph/path-prefix-settings",
+  "description": "Path Prefix Bytes Settings - View and configure the path prefix bytes setting on the radio page with impact analysis",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Fix LLM weather response bug - add tool execution logging",
-      "description": "As a developer, I need to understand why LLM queries are returning weather data instead of LLM responses.",
+      "title": "Add API endpoint to read path hash mode from radio",
+      "description": "As an operator, I need an API to get the current path hash mode from the radio so the UI can display it.",
       "acceptanceCriteria": [
-        "Add debug logging to tool_executor.py showing which tool is selected and why",
-        "Add debug logging to llm_command.py showing the query and response flow",
-        "Log the system prompt being sent to Ollama",
-        "Log when tools are invoked vs when direct LLM response is used",
+        "Add GET /api/radio/path-mode endpoint to web_viewer/app.py",
+        "Call MeshCore get_path_hash_mode() via async operation queue",
+        "Return JSON: {path_hash_mode: 0|1|2, prefix_bytes: 1|2|3, status: 'ok'|'error'}",
+        "Return appropriate error if radio not connected",
         "Typecheck passes",
         "Tests pass"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Added debug logging to tool_executor.py, llm_command.py, and tool_registry.py. Pre-existing test failures unrelated to logging changes."
+      "notes": "Added GET endpoint to app.py (line ~3974), scheduler handler _path_mode_read_op() and operation type registration. Pre-existing test failures unrelated to these changes."
     },
     {
       "id": "US-002",
-      "title": "Fix LLM tool routing - prevent incorrect weather tool invocation",
-      "description": "As a user, I want my !ask queries to return relevant LLM responses, not weather data.",
+      "title": "Add API endpoint to write path hash mode to radio",
+      "description": "As an operator, I need an API to change the path hash mode on the radio.",
       "acceptanceCriteria": [
-        "Review tool_registry.py and tool_executor.py for routing logic",
-        "Ensure LLM only calls weather tool when query explicitly mentions weather",
-        "Add keyword filtering to prevent false positive tool matches",
-        "Test with query 'are dolphins intelligent' - should NOT return weather",
-        "Test with query 'what is the weather' - should return weather data",
+        "Add POST /api/radio/path-mode endpoint to web_viewer/app.py",
+        "Accept JSON body: {path_hash_mode: 0|1|2} or {prefix_bytes: 1|2|3}",
+        "Validate input is 0, 1, or 2 (or 1, 2, 3 for prefix_bytes)",
+        "Call MeshCore set_path_hash_mode(mode) via async operation queue",
+        "Return success/failure status",
         "Typecheck passes",
         "Tests pass"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Added keyword-based intent filtering to tool_registry.py. Tools are only offered to LLM when query contains relevant keywords. Pre-existing test failures unrelated to changes."
+      "notes": "Added POST endpoint to app.py (line ~3994-4035), scheduler operation dispatch (line ~994), and _path_mode_write_op method (line ~1210-1248). Pre-existing test failures unrelated to these changes."
     },
     {
       "id": "US-003",
-      "title": "Add unit tests for LLM tool routing",
-      "description": "As a developer, I need tests to prevent future tool routing regressions.",
+      "title": "Update bot runtime prefix_bytes after radio change",
+      "description": "As a developer, I need the bot to use the new prefix_bytes value after it's changed on the radio.",
       "acceptanceCriteria": [
-        "Create tests/test_tool_routing.py",
-        "Test that non-weather queries don't invoke weather tool",
-        "Test that weather queries do invoke weather tool",
-        "Test edge cases: 'hot dog' should not trigger weather",
-        "All tests pass",
-        "Coverage >80% for tool routing logic"
+        "After successful POST /api/radio/path-mode, update bot.prefix_bytes",
+        "Also update bot.prefix_hex_chars = prefix_bytes * 2",
+        "Log the change at INFO level: 'Prefix mode changed to N bytes'",
+        "New value is used immediately for path parsing without restart",
+        "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Created tests/test_tool_routing.py with 122 tests covering all tool routing scenarios. Coverage for tool_registry.py is 99%. Pre-existing test failure in test_tool_registry.py unrelated to new tests."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-004",
-      "title": "Add database migration for repeater advertisement tracking",
-      "description": "As a developer, I need a table to store repeater advertisement observations for connectivity metrics.",
+      "title": "Add API endpoint for path mode impact analysis",
+      "description": "As an operator, I need to see how changing prefix bytes would affect stored paths and contacts.",
       "acceptanceCriteria": [
-        "Create migration in modules/db_migrations.py for repeater_adverts table",
-        "Table has columns: id, repeater_pubkey, repeater_name, observed_at, snr, rssi, hops",
-        "Create index on repeater_pubkey",
-        "Create index on observed_at for time-based queries",
-        "Migration runs successfully when bot starts",
-        "Typecheck passes",
-        "Tests pass"
+        "Add GET /api/radio/path-mode/impact?target=N endpoint (N = 0, 1, or 2)",
+        "Query observed_paths table for count where bytes_per_hop != target+1",
+        "Query complete_contact_tracking for count where out_bytes_per_hop != target+1",
+        "Return JSON: {affected_paths: N, affected_contacts: N, sample_contacts: [...]}",
+        "Limit sample_contacts to 10 names",
+        "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Created migration 15 (_m0015_repeater_adverts_table) with repeater_adverts table and indexes on repeater_pubkey and observed_at."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-005",
-      "title": "Capture repeater advertisements in message handler",
-      "description": "As a developer, I need to record repeater adverts when they are received.",
+      "title": "Create Advanced Settings card structure on radio page",
+      "description": "As an operator, I want to see advanced radio settings in a dedicated section.",
       "acceptanceCriteria": [
-        "In message_handler.py, detect repeater advertisement packets",
-        "Extract repeater pubkey, name, SNR, RSSI, hops from advert",
-        "Insert record into repeater_adverts table",
-        "Handle duplicate adverts gracefully (allow multiple observations)",
-        "Typecheck passes",
-        "Tests pass"
+        "Add 'Advanced Settings' card below Radio Parameters card in radio.html",
+        "Card uses consistent styling with existing cards (Bootstrap card)",
+        "Card includes header with icon and 'Read from Device' button",
+        "Card body has placeholder div for path mode settings",
+        "Card shows loading state while fetching settings",
+        "Typecheck passes"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "Added _record_repeater_advert() method to message_handler.py. Inserts into repeater_adverts table after successful tracking. Includes 7 unit tests."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-006",
-      "title": "Create connectivity metrics calculation module",
-      "description": "As a developer, I need functions to calculate mesh connectivity statistics.",
+      "title": "Display current path mode in Advanced Settings card",
+      "description": "As an operator, I want to see the current path prefix bytes value with clear explanation.",
       "acceptanceCriteria": [
-        "Create modules/connectivity_metrics.py",
-        "Implement get_repeaters_known() - count total repeaters in contacts",
-        "Implement get_repeaters_heard(hours) - count repeaters with adverts in time window",
-        "Implement get_connectivity_percentage(hours) - heard/known * 100",
-        "Implement get_avg_adverts_per_day() - average advert frequency",
-        "Add comprehensive docstrings",
-        "Typecheck passes",
-        "Tests pass"
+        "On page load, call GET /api/radio/path-mode to fetch current value",
+        "Display label 'Path Prefix Size' with current value: '1 byte (2 hex chars)' etc",
+        "Include brief explanation text below the value",
+        "Show 'Unknown' or 'N/A' when radio is disconnected",
+        "Typecheck passes"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "Created modules/connectivity_metrics.py with ConnectivityMetrics class. Implements all required functions with comprehensive docstrings. Also includes get_summary() convenience method."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-007",
-      "title": "Create health command plugin",
-      "description": "As a user, I want to check mesh connectivity health with !health command.",
+      "title": "Add path mode selector dropdown",
+      "description": "As an operator, I want to select a different path prefix size to change routing.",
       "acceptanceCriteria": [
-        "Create modules/commands/health_command.py inheriting from BaseCommand",
-        "Set name='health', keywords=['health', 'connectivity']",
-        "Call connectivity_metrics functions to gather data",
-        "Format response: 'Mesh Health: X known / Y heard (48h) / Z heard (24h), N% connectivity'",
-        "Add [Health_Command] section to config.ini.example with enabled flag",
-        "Typecheck passes",
-        "Tests pass"
+        "Add dropdown/select with options: '1 byte (2 hex)', '2 bytes (4 hex)', '3 bytes (6 hex)'",
+        "Current radio value is pre-selected on load",
+        "Selector is disabled when radio is disconnected",
+        "Selection change triggers impact analysis fetch",
+        "Typecheck passes"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Created modules/commands/health_command.py with name='health', keywords=['health', 'connectivity']. Calls ConnectivityMetrics to gather data and formats response. Added [Health_Command] section to config.ini.example."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-008",
-      "title": "Add unit tests for connectivity metrics",
-      "description": "As a developer, I need tests for the connectivity calculation functions.",
+      "title": "Display impact analysis when selection changes",
+      "description": "As an operator, I want to see how many contacts and paths would be affected before changing.",
       "acceptanceCriteria": [
-        "Create tests/test_connectivity_metrics.py",
-        "Test get_repeaters_known() with empty and populated DB",
-        "Test get_repeaters_heard() with various time windows",
-        "Test get_connectivity_percentage() edge cases (0 known, 100%)",
-        "Use tmp_path fixture for test database",
-        "All tests pass"
+        "When dropdown selection differs from current value, call impact API",
+        "Display impact summary: 'X paths and Y contacts use different prefix width'",
+        "Show warning icon with yellow/orange styling when impact > 0",
+        "List up to 5 affected contact names as examples",
+        "Hide impact section when selection matches current value",
+        "Typecheck passes"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Created tests/test_connectivity_metrics.py with 29 tests covering all methods and edge cases. Uses tmp_path fixture for test database."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-009",
-      "title": "Add 1-byte path collision warning to path command",
-      "description": "As a user, I want to know when path resolution may be unreliable due to hash collisions.",
+      "title": "Add confirmation modal for path mode change",
+      "description": "As an operator, I want to confirm before changing path prefix size to avoid accidents.",
       "acceptanceCriteria": [
-        "In path_command.py, detect when path uses 1-byte prefixes",
-        "Add warning symbol ⚠️ to output when 1-byte path detected",
-        "Add config option show_collision_warning (default true)",
-        "Warning text: '1-byte path (may have collisions)'",
-        "Typecheck passes",
-        "Tests pass"
+        "Add 'Write to Device' button that triggers Bootstrap confirmation modal",
+        "Modal shows current value and new value clearly",
+        "Modal displays impact summary (paths/contacts affected count)",
+        "Modal includes warning text about mesh routing implications",
+        "Modal has 'Cancel' and 'Confirm Change' buttons",
+        "Button is disabled when selection equals current value",
+        "Typecheck passes"
       ],
       "priority": 9,
-      "passes": true,
-      "notes": "Added _is_one_byte_path() method and show_collision_warning config option. Warning appended to _format_path_response() output. Pre-existing test failures in test_path_command_*.py unrelated."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-010",
-      "title": "Add location labels to path command output",
-      "description": "As a user, I want to see geographic context in path responses like HA Relay does.",
+      "title": "Implement path mode write with feedback",
+      "description": "As an operator, I want to save my path mode change and see confirmation.",
       "acceptanceCriteria": [
-        "In path_command.py, look up location for first and last hop",
-        "Add location labels to output format: '[5h] (Leander→Austin) a1b2,c3d4...'",
-        "Use repeater contact data for location lookup",
-        "Add config option include_location_names (default true)",
-        "Fall back gracefully if location unknown",
-        "Typecheck passes",
-        "Tests pass"
+        "Clicking 'Confirm Change' calls POST /api/radio/path-mode",
+        "Show spinner/loading state while operation in progress",
+        "Poll operation status (follow existing channel operation pattern)",
+        "Show success toast notification on completion",
+        "Show error toast if write fails with error message",
+        "Refresh displayed value after successful write",
+        "Close modal on success",
+        "Typecheck passes"
       ],
       "priority": 10,
-      "passes": true,
-      "notes": "Added _get_location_label() and _get_location_labels() methods. Updated _format_path_response() to include location labels. Added include_location_names config option. Pre-existing test failures in test_path_command_*.py unrelated."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-011",
-      "title": "Add public_channel_mode config to help command",
-      "description": "As a bot operator, I want to configure how help responds on public channels.",
+      "title": "Show path mode mismatch warning indicator",
+      "description": "As an operator, I want to be warned if stored paths use a different prefix width than current setting.",
       "acceptanceCriteria": [
-        "Add public_channel_mode config option to [Help_Command] section",
-        "Support values: 'redirect', 'brief', 'full' (default 'full' for backward compat)",
-        "Update config.ini.example with new option and comments",
+        "After reading current path mode, check if any paths have different bytes_per_hop",
+        "If mismatch exists, show warning badge next to current value",
+        "Warning text: 'Some stored paths use different prefix width'",
+        "Clicking warning shows count breakdown by bytes_per_hop",
+        "Use Bootstrap popover or collapse for details",
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": true,
-      "notes": "Added public_channel_mode config option with 'redirect', 'brief', 'full' values. Updated config.ini.example with documentation. Pre-existing test failure in test_help_command.py unrelated."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-012",
-      "title": "Implement help command redirect mode",
-      "description": "As a user, I want help to tell me to DM the bot on public channels to reduce noise.",
+      "title": "Add unit tests for path mode API endpoints",
+      "description": "As a developer, I need tests to verify the path mode API endpoints work correctly.",
       "acceptanceCriteria": [
-        "In help_command.py, check public_channel_mode config",
-        "If 'redirect' and message is on channel, respond 'Send !help to me in a DM.'",
-        "If 'brief', send short list on channel + full via DM",
-        "If 'full', use current behavior",
-        "DM sending uses existing send_dm() method",
-        "Typecheck passes",
-        "Tests pass"
+        "Create tests for GET /api/radio/path-mode endpoint",
+        "Create tests for POST /api/radio/path-mode endpoint",
+        "Create tests for GET /api/radio/path-mode/impact endpoint",
+        "Test validation of invalid input values",
+        "Test error handling when radio disconnected",
+        "All tests pass"
       ],
       "priority": 12,
-      "passes": true,
-      "notes": "Implemented _handle_general_help() with redirect/brief/full modes. DMs always get full help. Brief mode sends 5 commands on channel + full via DM. Pre-existing test failure in test_help_command.py unrelated."
-    },
-    {
-      "id": "US-013",
-      "title": "Create ding command plugin",
-      "description": "As a user, I want !ding to respond with 'Dong!' for fun.",
-      "acceptanceCriteria": [
-        "Create modules/commands/ding_command.py inheriting from BaseCommand",
-        "Set name='ding', keywords=['ding'], description='Responds with Dong!'",
-        "Implement execute() to send 'Dong!' response",
-        "Add [Ding_Command] section to config.ini.example with enabled and response options",
-        "Response text configurable via config",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "Created modules/commands/ding_command.py with configurable response. Added [Ding_Command] section to config.ini.example. Pre-existing test failures in test_path_command_*.py unrelated."
-    },
-    {
-      "id": "US-014",
-      "title": "Add unit tests for ding command",
-      "description": "As a developer, I need tests for the ding command.",
-      "acceptanceCriteria": [
-        "Create tests/commands/test_ding_command.py",
-        "Test default response 'Dong!'",
-        "Test custom response from config",
-        "Test command is rate limited",
-        "All tests pass"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": "Created tests/commands/test_ding_command.py with 24 tests covering metadata, can_execute, execute, rate limiting, and config handling. Pre-existing test failures (23 tests) are unrelated."
-    },
-    {
-      "id": "US-015",
-      "title": "Update documentation for new commands and features",
-      "description": "As a user, I want documentation for the new health and ding commands.",
-      "acceptanceCriteria": [
-        "Add !health command to docs/command-reference.md",
-        "Add !ding command to docs/command-reference.md",
-        "Document public_channel_mode option for help command",
-        "Document connectivity metrics feature",
-        "Update README.md features list if needed"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "Added !health command, !ding command, and help public_channel_mode to docs/command-reference.md. Added connectivity metrics to README.md features list and added health/ding to quick reference."
-    },
-    {
-      "id": "US-016",
-      "title": "Create LLM SQL query tool with schema introspection",
-      "description": "As an LLM, I need a tool to query the SQLite database directly so I can answer questions about repeaters, contacts, and mesh data without hardcoded limits.",
-      "acceptanceCriteria": [
-        "Create modules/commands/sql_query_command.py as a new LLM-callable tool",
-        "Implement get_schema() method that returns all table DDL statements",
-        "Implement query(sql, limit) method that executes SELECT queries only",
-        "Reject INSERT/UPDATE/DELETE/DROP/ALTER statements for safety",
-        "Add 'limit' parameter that LLM can specify (default 100, max 1000)",
-        "Include table DDL in tool description so LLM knows available schema",
-        "Add to available_tools in config.ini.example",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": "Created modules/commands/sql_query_command.py with get_schema() and query() methods. Rejects INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE/PRAGMA. Limit parameter: default 100, max 1000. Added sql_query to available_tools in config.ini.example and TOOL_TRIGGER_KEYWORDS in tool_registry.py."
-    },
-    {
-      "id": "US-017",
-      "title": "Add limit parameter to stats command for LLM flexibility",
-      "description": "As an LLM, I need to specify my own limits when calling the stats command instead of using hardcoded values.",
-      "acceptanceCriteria": [
-        "Add optional 'limit' parameter to stats command metadata",
-        "Update stats queries to use parameterized limit instead of hardcoded LIMIT 5/8/20",
-        "Default limit to reasonable value (20) when not specified",
-        "Cap maximum limit at 100 to prevent abuse",
-        "Update tool schema in parameters list with limit description",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 17,
-      "passes": true,
-      "notes": "Added limit parameter (default 20, max 100) to stats command. Updated all leaderboard queries to use parameterized limit. Pre-existing test failures (23 tests) are unrelated."
-    },
-    {
-      "id": "US-018",
-      "title": "Create repeaters query tool for LLM",
-      "description": "As an LLM, I need a dedicated tool to query repeater/contact data so I can answer questions like 'what are the closest repeaters'.",
-      "acceptanceCriteria": [
-        "Create modules/commands/repeaters_command.py for LLM tool use",
-        "Query complete_contact_tracking table for repeater data",
-        "Support filtering by: is_repeater, has_location, distance from bot",
-        "Add 'sort_by' parameter: distance, name, last_seen",
-        "Add 'limit' parameter (default 10, max 50)",
-        "Calculate distance from bot location when available",
-        "Return JSON-formatted data for LLM consumption",
-        "Add to available_tools config",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 18,
-      "passes": true,
-      "notes": "Created modules/commands/repeaters_command.py with is_repeater, has_location filters, sort_by (distance/name/last_seen), limit (default 10, max 50). Added to TOOL_TRIGGER_KEYWORDS and available_tools in config.ini.example. Pre-existing test failures (23 tests) are unrelated."
-    },
-    {
-      "id": "US-019",
-      "title": "Add unit tests for LLM SQL query tool",
-      "description": "As a developer, I need tests for the SQL query tool to ensure security.",
-      "acceptanceCriteria": [
-        "Create tests/commands/test_sql_query_command.py",
-        "Test SELECT queries execute successfully",
-        "Test INSERT/UPDATE/DELETE are rejected",
-        "Test DROP/ALTER statements are rejected",
-        "Test limit parameter is respected",
-        "Test max limit cap is enforced",
-        "Test schema introspection returns valid DDL",
-        "All tests pass"
-      ],
-      "priority": 19,
-      "passes": true,
-      "notes": "Created tests/commands/test_sql_query_command.py with 80 tests covering: SELECT queries, INSERT/UPDATE/DELETE rejection, DROP/ALTER rejection, limit parameter, max limit cap, and schema introspection. All tests pass. Pre-existing test failures (23 tests) are unrelated."
-    },
-    {
-      "id": "US-020",
-      "title": "Update LLM system prompt with database context",
-      "description": "As an LLM, I need the system prompt to include database schema information so I can write appropriate queries.",
-      "acceptanceCriteria": [
-        "Update llm_command.py to include schema summary in system prompt",
-        "List key tables: complete_contact_tracking, message_stats, repeater_adverts, mesh_connections",
-        "Include column descriptions for important fields",
-        "Mention that LLM should choose appropriate LIMIT/ORDER BY based on question",
-        "Keep system prompt concise to not waste context",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 20,
-      "passes": true,
-      "notes": "Added _get_database_context() method to llm_command.py. System prompt is enhanced with database schema when data tools (sql_query, repeaters, stats) are offered. Includes all key tables with column descriptions and query guidelines. Context is ~1KB. Pre-existing test failures (23 tests) are unrelated."
+      "passes": false,
+      "notes": ""
     }
   ]
 }
