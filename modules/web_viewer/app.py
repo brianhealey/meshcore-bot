@@ -3991,6 +3991,79 @@ class BotDataViewer:
                 self.logger.error(f"Error queuing path mode read: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        @self.app.route('/api/radio/path-mode/impact', methods=['GET'])
+        def api_radio_path_mode_impact():
+            """Analyze impact of changing path prefix bytes setting.
+
+            Query parameter:
+                target: Target path_hash_mode (0, 1, or 2) - required
+
+            Returns:
+                JSON with affected_paths, affected_contacts, sample_contacts (max 10).
+            """
+            try:
+                target_str = request.args.get('target')
+                if target_str is None:
+                    return jsonify({'error': 'target parameter required (0, 1, or 2)'}), 400
+
+                try:
+                    target = int(target_str)
+                except ValueError:
+                    return jsonify({'error': 'target must be an integer'}), 400
+
+                if target not in (0, 1, 2):
+                    return jsonify({'error': 'target must be 0, 1, or 2'}), 400
+
+                # Convert path_hash_mode to prefix_bytes (mode + 1)
+                target_bytes = target + 1
+
+                with self.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+
+                    # Count paths with different bytes_per_hop
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS cnt FROM observed_paths
+                        WHERE bytes_per_hop IS NOT NULL AND bytes_per_hop != ?
+                        """,
+                        (target_bytes,)
+                    )
+                    affected_paths = cursor.fetchone()['cnt']
+
+                    # Count contacts with different out_bytes_per_hop
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS cnt FROM complete_contact_tracking
+                        WHERE out_bytes_per_hop IS NOT NULL AND out_bytes_per_hop != ?
+                        """,
+                        (target_bytes,)
+                    )
+                    affected_contacts = cursor.fetchone()['cnt']
+
+                    # Get sample contact names (limit 10)
+                    cursor.execute(
+                        """
+                        SELECT name FROM complete_contact_tracking
+                        WHERE out_bytes_per_hop IS NOT NULL AND out_bytes_per_hop != ?
+                        ORDER BY last_heard DESC
+                        LIMIT 10
+                        """,
+                        (target_bytes,)
+                    )
+                    sample_contacts = [row['name'] for row in cursor.fetchall()]
+
+                return jsonify({
+                    'affected_paths': affected_paths,
+                    'affected_contacts': affected_contacts,
+                    'sample_contacts': sample_contacts,
+                    'target_mode': target,
+                    'target_bytes': target_bytes
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error analyzing path mode impact: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @self.app.route('/api/radio/path-mode', methods=['POST'])
         def api_radio_path_mode_write():
             """Queue a path hash mode write. Poll /api/channel-operations/<id>.
