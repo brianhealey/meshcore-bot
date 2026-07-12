@@ -4,7 +4,6 @@ Path Decode Command for the MeshCore Bot
 Decodes hex path data to show which repeaters were involved in message routing
 """
 
-import asyncio
 import contextlib
 import json
 import re

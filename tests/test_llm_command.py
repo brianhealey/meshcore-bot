@@ -592,7 +592,7 @@ class TestLLMCommandToolCalling:
         assert cmd.tool_executor is None
 
     async def test_tool_calling_enabled_initializes_components(self, command_mock_bot_with_llm):
-        """Test that enabling tool calling initializes ToolRegistry and ToolExecutor."""
+        """Test that enabling tool calling initializes ToolRegistry and ToolExecutor lazily on execute."""
         # Update mock config to enable tools
         original_get = command_mock_bot_with_llm.config.get
 
@@ -606,8 +606,17 @@ class TestLLMCommandToolCalling:
             side_effect=lambda s, o, fallback=False: get_with_tools(s, o, fallback) == 'true'
         )
 
+        # Mock command_manager.commands for ToolRegistry initialization
+        command_mock_bot_with_llm.command_manager.commands = {}
+
         cmd = LLMCommand(command_mock_bot_with_llm)
         assert cmd.enable_tools is True
+        # Tools are None before first execute (lazy initialization)
+        assert cmd.tool_registry is None
+        assert cmd.tool_executor is None
+
+        # Trigger lazy initialization via _initialize_tools
+        cmd._initialize_tools()
         assert cmd.tool_registry is not None
         assert cmd.tool_executor is not None
 
@@ -661,6 +670,7 @@ class TestLLMCommandToolCalling:
         # Enable tools
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
         cmd.tool_executor = Mock()
@@ -687,6 +697,7 @@ class TestLLMCommandToolCalling:
         """Test LLM calls single tool and returns final response."""
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[
             {
@@ -747,6 +758,7 @@ class TestLLMCommandToolCalling:
         """Test LLM calls multiple tools in sequence."""
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.max_tools_per_query = 5
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
@@ -800,6 +812,7 @@ class TestLLMCommandToolCalling:
         """Test that tool calling respects max_tools_per_query limit."""
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.max_tools_per_query = 2  # Limit to 2 tools
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
@@ -854,6 +867,7 @@ class TestLLMCommandToolCalling:
         """Test that tool execution errors are handled gracefully."""
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
         cmd.tool_executor = Mock()
@@ -891,6 +905,7 @@ class TestLLMCommandToolCalling:
         """Test that LLM response without tool calls returns immediately."""
         cmd = LLMCommand(command_mock_bot_with_llm)
         cmd.enable_tools = True
+        cmd._tools_initialized = True  # Prevent lazy init from overwriting mocks
         cmd.tool_registry = Mock()
         cmd.tool_registry.get_all_tool_schemas = Mock(return_value=[])
         cmd.tool_executor = Mock()
