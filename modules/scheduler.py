@@ -1235,6 +1235,21 @@ class MessageScheduler:
                 return False, {'error': f'set_path_hash_mode({mode}) failed: {result}', 'status': 'error'}
 
             prefix_bytes = mode + 1
+
+            # Update bot runtime values so new prefix is used immediately for path parsing
+            old_prefix_bytes = getattr(self.bot, 'prefix_bytes', None)
+            self.bot.prefix_bytes = prefix_bytes
+            self.bot.prefix_hex_chars = prefix_bytes * 2
+            self.logger.info(
+                f"Prefix mode changed to {prefix_bytes} bytes "
+                f"({prefix_bytes * 2} hex chars)"
+            )
+            if old_prefix_bytes is not None and old_prefix_bytes != prefix_bytes:
+                self.logger.info(
+                    f"Path parsing will now use {prefix_bytes}-byte prefixes "
+                    f"(was {old_prefix_bytes} bytes)"
+                )
+
             return True, {
                 'path_hash_mode': mode,
                 'prefix_bytes': prefix_bytes,
