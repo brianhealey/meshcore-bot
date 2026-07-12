@@ -153,13 +153,34 @@
                             <div class="row g-3">
                                 <div class="col-md-6">
                                     <label class="form-label fw-bold">Path Prefix Size</label>
-                                    <div id="pathModeDisplay" class="text-muted">
-                                        <span id="pathModeValue">Unknown</span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span id="pathModeValue" class="text-muted">Unknown</span>
+                                        <button class="btn btn-sm btn-outline-primary" id="editPathModeBtn" style="display:none">
+                                            <i class="fas fa-edit"></i> Change
+                                        </button>
                                     </div>
                                     <small class="form-text text-muted">
                                         The number of bytes used to identify nodes in mesh routing paths.
                                         Larger values support more unique nodes but increase message overhead.
                                     </small>
+                                </div>
+                                <div class="col-md-6" id="pathModeEditPanel" style="display:none">
+                                    <label class="form-label fw-bold">Set New Path Prefix Size</label>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <select class="form-select form-select-sm" id="pathModeSelect" style="width: auto;">
+                                            <option value="1">1 byte (2 hex chars)</option>
+                                            <option value="2">2 bytes (4 hex chars)</option>
+                                            <option value="3">3 bytes (6 hex chars)</option>
+                                        </select>
+                                        <button class="btn btn-sm btn-success" id="savePathModeBtn">
+                                            <span class="spinner-border spinner-border-sm me-1" id="savePathModeSpinner" style="display:none" role="status"></span>
+                                            <i class="fas fa-save me-1" id="savePathModeIcon"></i>Save
+                                        </button>
+                                        <button class="btn btn-sm btn-secondary" id="cancelPathModeBtn">Cancel</button>
+                                    </div>
+                                    <div id="pathModeImpact" class="mt-2" style="display:none">
+                                        <small class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i><span id="pathModeImpactText"></span></small>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1010,6 +1031,116 @@ class RadioManager {
     // Advanced Settings handlers
     setupAdvancedSettingsHandlers() {
         document.getElementById('readAdvancedSettingsBtn').addEventListener('click', () => this.readAdvancedSettings());
+        document.getElementById('editPathModeBtn').addEventListener('click', () => this.showPathModeEdit());
+        document.getElementById('cancelPathModeBtn').addEventListener('click', () => this.hidePathModeEdit());
+        document.getElementById('savePathModeBtn').addEventListener('click', () => this.savePathMode());
+        document.getElementById('pathModeSelect').addEventListener('change', () => this.checkPathModeImpact());
+    }
+
+    showPathModeEdit() {
+        document.getElementById('pathModeEditPanel').style.display = 'block';
+        document.getElementById('editPathModeBtn').style.display = 'none';
+        // Set dropdown to current value
+        const currentBytes = this.currentPrefixBytes || 1;
+        document.getElementById('pathModeSelect').value = currentBytes;
+        this.checkPathModeImpact();
+    }
+
+    hidePathModeEdit() {
+        document.getElementById('pathModeEditPanel').style.display = 'none';
+        document.getElementById('editPathModeBtn').style.display = 'inline-block';
+        document.getElementById('pathModeImpact').style.display = 'none';
+    }
+
+    async checkPathModeImpact() {
+        const targetBytes = parseInt(document.getElementById('pathModeSelect').value);
+        const targetMode = targetBytes - 1; // Convert to path_hash_mode (0, 1, 2)
+        const impactDiv = document.getElementById('pathModeImpact');
+        const impactText = document.getElementById('pathModeImpactText');
+
+        try {
+            const resp = await fetch(`/api/radio/path-mode/impact?target=${targetMode}`);
+            const data = await resp.json();
+            if (resp.ok && data.affected_contacts > 0) {
+                impactText.textContent = `Warning: ${data.affected_contacts} contacts and ${data.affected_paths} paths will be affected by this change.`;
+                impactDiv.style.display = 'block';
+            } else {
+                impactDiv.style.display = 'none';
+            }
+        } catch (e) {
+            impactDiv.style.display = 'none';
+        }
+    }
+
+    async savePathMode() {
+        const btn = document.getElementById('savePathModeBtn');
+        const spinner = document.getElementById('savePathModeSpinner');
+        const icon = document.getElementById('savePathModeIcon');
+        const targetBytes = parseInt(document.getElementById('pathModeSelect').value);
+
+        btn.disabled = true;
+        spinner.style.display = 'inline-block';
+        icon.style.display = 'none';
+
+        try {
+            // Step 1: Queue the write operation
+            const queueResp = await fetch('/api/radio/path-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prefix_bytes: targetBytes })
+            });
+            const queueData = await queueResp.json();
+
+            if (!queueResp.ok) {
+                this.setAdvancedAlert('danger', queueData.error || 'Failed to queue path mode write');
+                return;
+            }
+
+            const opId = queueData.operation_id;
+            if (!opId) {
+                this.setAdvancedAlert('danger', 'No operation ID returned');
+                return;
+            }
+
+            // Step 2: Poll for result
+            const maxAttempts = 30;
+            const pollInterval = 500;
+            let attempts = 0;
+            let success = false;
+
+            while (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                const pollResp = await fetch(`/api/channel-operations/${opId}`);
+                const pollData = await pollResp.json();
+
+                if (pollData.status === 'completed') {
+                    success = true;
+                    break;
+                } else if (pollData.status === 'failed') {
+                    this.setAdvancedAlert('danger', pollData.error || 'Path mode write failed');
+                    return;
+                }
+                attempts++;
+            }
+
+            if (!success) {
+                this.setAdvancedAlert('danger', 'Timeout waiting for path mode write');
+                return;
+            }
+
+            // Success - hide edit panel, refresh display
+            this.hidePathModeEdit();
+            this.setAdvancedAlert('success', `Path prefix size changed to ${targetBytes} byte${targetBytes > 1 ? 's' : ''}.`);
+            // Refresh the display
+            await this.readAdvancedSettings({ silent: true });
+
+        } catch (e) {
+            this.setAdvancedAlert('danger', 'Error: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+            icon.style.display = 'inline';
+        }
     }
 
     async readAdvancedSettings({ silent = false } = {}) {
@@ -1109,9 +1240,13 @@ class RadioManager {
 
     updatePathModeDisplay(data) {
         const pathModeValue = document.getElementById('pathModeValue');
+        const editBtn = document.getElementById('editPathModeBtn');
+
         if (!data || data.status === 'error') {
             pathModeValue.textContent = 'N/A (radio disconnected)';
             pathModeValue.className = 'text-muted';
+            editBtn.style.display = 'none';
+            this.currentPrefixBytes = null;
             return;
         }
 
@@ -1119,6 +1254,8 @@ class RadioManager {
         const hexChars = prefixBytes * 2;
         pathModeValue.textContent = `${prefixBytes} byte${prefixBytes > 1 ? 's' : ''} (${hexChars} hex chars)`;
         pathModeValue.className = 'text-success fw-bold';
+        editBtn.style.display = 'inline-block';
+        this.currentPrefixBytes = prefixBytes;
     }
 
     setAdvancedAlert(type, message) {

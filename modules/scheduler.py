@@ -955,7 +955,7 @@ class MessageScheduler:
                           'radio_reboot', 'radio_connect', 'radio_disconnect',
                           'firmware_read', 'firmware_write',
                           'radio_params_read', 'radio_params_write',
-                          'path_mode_read'
+                          'path_mode_read', 'path_mode_write'
                       )
                     ORDER BY created_at ASC
                     LIMIT 1
