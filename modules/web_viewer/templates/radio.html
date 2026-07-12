@@ -1029,18 +1029,60 @@ class RadioManager {
         }
 
         try {
-            const resp = await fetch('/api/radio/path-mode');
-            const data = await resp.json();
+            // Step 1: Queue the operation
+            const queueResp = await fetch('/api/radio/path-mode');
+            const queueData = await queueResp.json();
 
-            if (!resp.ok) {
-                if (silent && (data.error || '').toLowerCase().includes('not connected')) {
-                    // Show content area but with 'N/A' values for disconnected state
+            if (!queueResp.ok) {
+                if (silent && (queueData.error || '').toLowerCase().includes('not connected')) {
                     loadingDiv.style.display = 'none';
                     contentDiv.style.display = 'block';
                     this.updatePathModeDisplay(null);
                     return;
                 }
-                this.setAdvancedAlert('danger', data.error || 'Failed to read path mode');
+                this.setAdvancedAlert('danger', queueData.error || 'Failed to queue path mode read');
+                loadingDiv.style.display = 'none';
+                contentDiv.style.display = 'block';
+                this.updatePathModeDisplay(null);
+                return;
+            }
+
+            const opId = queueData.operation_id;
+            if (!opId) {
+                this.setAdvancedAlert('danger', 'No operation ID returned');
+                loadingDiv.style.display = 'none';
+                contentDiv.style.display = 'block';
+                this.updatePathModeDisplay(null);
+                return;
+            }
+
+            // Step 2: Poll for result
+            const maxAttempts = 30;
+            const pollInterval = 500;
+            let attempts = 0;
+            let result = null;
+
+            while (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                const pollResp = await fetch(`/api/channel-operations/${opId}`);
+                const pollData = await pollResp.json();
+
+                if (pollData.status === 'completed') {
+                    result = pollData.result || {};
+                    break;
+                } else if (pollData.status === 'failed') {
+                    this.setAdvancedAlert('danger', pollData.error || 'Path mode read failed');
+                    loadingDiv.style.display = 'none';
+                    contentDiv.style.display = 'block';
+                    this.updatePathModeDisplay(null);
+                    return;
+                }
+                // Still pending, keep polling
+                attempts++;
+            }
+
+            if (!result) {
+                this.setAdvancedAlert('danger', 'Timeout waiting for path mode read');
                 loadingDiv.style.display = 'none';
                 contentDiv.style.display = 'block';
                 this.updatePathModeDisplay(null);
@@ -1050,7 +1092,7 @@ class RadioManager {
             // Success - show content
             loadingDiv.style.display = 'none';
             contentDiv.style.display = 'block';
-            this.updatePathModeDisplay(data);
+            this.updatePathModeDisplay(result);
             if (!silent) this.setAdvancedAlert('success', 'Advanced settings read successfully.');
 
         } catch (e) {
