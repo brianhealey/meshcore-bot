@@ -1132,11 +1132,11 @@ class RadioManager {
                 return;
             }
 
-            // Success - hide edit panel, refresh display
+            // Success - hide edit panel, update display immediately with what we set
             this.hidePathModeEdit();
             this.setAdvancedAlert('success', `Path prefix size changed to ${targetBytes} byte${targetBytes > 1 ? 's' : ''}.`);
-            // Refresh the display
-            await this.readAdvancedSettings({ silent: true });
+            // Update display with the value we just set (don't re-read from radio)
+            this.updatePathModeDisplay({ prefix_bytes: targetBytes, status: 'ok' });
 
         } catch (e) {
             this.setAdvancedAlert('danger', 'Error: ' + e.message);
