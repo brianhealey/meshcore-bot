@@ -514,6 +514,29 @@ def _m0014_extend_llm_context_for_commands(cursor: sqlite3.Cursor) -> None:
     _add_column(cursor, "llm_conversation_context", "sender_name", "TEXT")
 
 
+def _m0015_repeater_adverts_table(cursor: sqlite3.Cursor) -> None:
+    """Create repeater_adverts table for tracking repeater advertisement observations."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS repeater_adverts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repeater_pubkey TEXT NOT NULL,
+            repeater_name TEXT,
+            observed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            snr REAL,
+            rssi REAL,
+            hops INTEGER
+        )
+    """)
+    # Index on repeater_pubkey for filtering by repeater
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_repeater_adverts_pubkey ON repeater_adverts(repeater_pubkey)"
+    )
+    # Index on observed_at for time-based queries
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_repeater_adverts_observed_at ON repeater_adverts(observed_at)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Migration registry — append new entries here, never remove or reorder.
 # ---------------------------------------------------------------------------
@@ -535,6 +558,7 @@ MIGRATIONS: list[MigrationEntry] = [
     (12, "purging_log: add details column", _m0012_purging_log_details_column),
     (13, "llm_conversation_context table", _m0013_llm_conversation_context),
     (14, "llm_conversation_context: command_name, sender_name", _m0014_extend_llm_context_for_commands),
+    (15, "repeater_adverts table for connectivity metrics", _m0015_repeater_adverts_table),
 ]
 
 
