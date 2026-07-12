@@ -31,6 +31,8 @@ class MeshMessage:
     reply_scope: Optional[str] = None
     # Lowercased content set by base_command.cleanup_message_for_matching
     content_lower: str = ""
+    # Flag indicating this message is a synthetic tool execution (suppresses sending)
+    is_tool_execution: bool = False
 
     def effective_outgoing_flood_scope(self, bot: Any) -> str:
         """Resolve outbound flood scope the same way as ``CommandManager.send_channel_message``.

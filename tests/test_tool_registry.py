@@ -448,17 +448,22 @@ class TestSatpassCommandToolSchema:
 class TestPathCommandToolSchema:
     """Tests for path_command tool schema generation (US-012)."""
 
-    def test_path_command_has_destination_parameter_required(self):
-        """Test that path command has destination as required parameter."""
+    def test_path_command_has_path_hex_parameter_optional(self):
+        """Test that path command has path_hex as optional parameter.
+
+        The path command should be used without parameters to automatically
+        analyze the sender's incoming message path. Explicit hex paths are
+        for advanced users only.
+        """
         from modules.commands.path_command import PathCommand
 
         params = PathCommand.parameters
-        destination_param = next((p for p in params if p["name"] == "destination"), None)
+        path_hex_param = next((p for p in params if p["name"] == "path_hex"), None)
 
-        assert destination_param is not None
-        assert destination_param["required"] is True
-        assert destination_param["type"] == "string"
-        assert "node" in destination_param["description"].lower() or "path" in destination_param["description"].lower()
+        assert path_hex_param is not None
+        assert path_hex_param["required"] is False
+        assert path_hex_param["type"] == "string"
+        assert "path" in path_hex_param["description"].lower()
 
     def test_path_command_description(self):
         """Test that path command has correct description."""

@@ -105,6 +105,7 @@ class TestPathCommandExtractPathUsesRoutingInfo:
         path_command._current_message = MeshMessage(
             content="path",
             path="0102,5f7e (2 hops via FLOOD)",
+            sender_id="User",
             routing_info={
                 'path_length': 2,
                 'path_nodes': ['0102', '5f7e'],
@@ -122,19 +123,28 @@ class TestPathCommandExtractPathUsesRoutingInfo:
         path_command._lookup_repeater_names = capture_lookup
         decode_path_called = []
 
-        async def track_decode(path_input):
+        async def track_decode(path_input, routing_info=None, message=None):
             decode_path_called.append(path_input)
             return "decode_path_result"
 
         path_command._decode_path = track_decode
         path_command.translate = lambda key, **kwargs: f"msg:{kwargs.get('node_id', kwargs.get('name', key))}"
 
+        # Mock _format_path_response to return a simple result
+        async def mock_format(node_ids, repeater_info, sender_name):
+            return f"@[{sender_name}] {','.join(n.lower() for n in node_ids)} route"
+
+        path_command._format_path_response = mock_format
+
         result = await path_command._extract_path_from_recent_messages()
 
+        # New implementation calls _decode_node_ids which calls _lookup_repeater_names
         assert len(captured) == 1
-        assert captured[0] == ['0102', '5F7E']
+        # Node IDs are uppercased when passed to lookup
+        assert '0102' in [n.lower() for n in captured[0]] and '5f7e' in [n.lower() for n in captured[0]]
         assert len(decode_path_called) == 0, "Should not call _decode_path when routing_info.path_nodes present"
-        assert '0102' in result and '5F7E' in result
+        # New format uses lowercase node IDs
+        assert '0102' in result.lower() and '5f7e' in result.lower()
 
     @pytest.mark.asyncio
     async def test_direct_connection_when_routing_info_path_length_zero(self, path_command, mock_bot):

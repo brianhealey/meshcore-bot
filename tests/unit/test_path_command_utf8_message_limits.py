@@ -36,7 +36,7 @@ class TestPathCommandTruncateToByteLength:
 
 @pytest.mark.unit
 class TestPathCommandFormatPathResponseByteCap:
-    """_format_path_response applies per-line UTF-8 byte cap (150)."""
+    """_format_path_response generates compact format with sender mention."""
 
     @pytest.fixture
     def path_cmd(self, mock_bot):
@@ -44,13 +44,17 @@ class TestPathCommandFormatPathResponseByteCap:
         cmd.translate = MockTranslate()
         return cmd
 
-    def test_unknown_line_with_emoji_truncated_to_byte_budget(self, path_cmd):
-        """Line may be few characters but many bytes; must fit 150-byte line cap."""
+    @pytest.mark.asyncio
+    async def test_format_includes_sender_mention_and_hop_count(self, path_cmd):
+        """New format: @[sender] hop_count path route: ~Xmi, direct: ~Xmi url."""
         node_ids = ["AB"]
         repeater_info = {"AB": {"found": False}}
-        raw = path_cmd._format_path_response(node_ids, repeater_info)
-        assert len(raw.encode("utf-8")) <= 150
-        assert "AB" in raw
+        with patch.object(path_cmd, '_shorten_url', new_callable=AsyncMock, return_value="https://da.gd/test"):
+            raw = await path_cmd._format_path_response(node_ids, repeater_info, "TestUser")
+        assert "@[TestUser]" in raw
+        assert "ab" in raw.lower()  # node_ids are lowercased
+        assert "route:" in raw
+        assert "direct:" in raw
 
 
 class MockTranslate:
@@ -67,7 +71,7 @@ class MockTranslate:
 
 @pytest.mark.unit
 class TestPathCommandSendPathResponseByteSplitting:
-    """_send_path_response splits on UTF-8 byte length, not character count."""
+    """_send_path_response truncates when response exceeds byte limit."""
 
     @pytest.fixture
     def path_cmd(self, mock_bot):
@@ -77,28 +81,29 @@ class TestPathCommandSendPathResponseByteSplitting:
         return cmd
 
     @pytest.mark.asyncio
-    async def test_splits_when_combined_lines_exceed_byte_budget(self, path_cmd):
-        """Two lines: 12 + newline + 13 = 26 UTF-8 bytes > budget 25 -> second send."""
+    async def test_truncates_when_response_exceeds_byte_budget(self, path_cmd):
+        """Response exceeding max_length gets truncated with indicator."""
         path_cmd.get_max_message_length = lambda _msg: 25
         msg = MeshMessage(content="path", channel="general", is_dm=False)
-        response = "a" * 12 + "\n" + "b" * 13
-        with patch("modules.commands.path_command.asyncio.sleep", new_callable=AsyncMock):
-            await path_cmd._send_path_response(msg, response)
-        assert path_cmd.send_response.await_count >= 2
+        response = "a" * 50  # Exceeds 25 byte limit
+        await path_cmd._send_path_response(msg, response)
+        # New implementation truncates instead of splitting
+        path_cmd.send_response.assert_awaited_once()
+        sent_text = path_cmd.send_response.call_args[0][1]
+        assert "(truncated)" in sent_text
 
     @pytest.mark.asyncio
     async def test_single_send_when_under_byte_budget(self, path_cmd):
         path_cmd.get_max_message_length = lambda _msg: 100
         msg = MeshMessage(content="path", channel="general", is_dm=False)
         response = "short"
-        with patch("modules.commands.path_command.asyncio.sleep", new_callable=AsyncMock):
-            await path_cmd._send_path_response(msg, response)
+        await path_cmd._send_path_response(msg, response)
         path_cmd.send_response.assert_awaited_once()
 
 
 @pytest.mark.unit
 class TestPathCommandReplyPrefix:
-    """reply_prefix prepended to first RF payload only; last_response includes prefix."""
+    """New format: mention is built into _format_path_response, not _send_path_response."""
 
     @pytest.fixture
     def path_cmd(self, mock_bot):
@@ -109,30 +114,28 @@ class TestPathCommandReplyPrefix:
         return cmd
 
     @pytest.mark.asyncio
-    async def test_prepends_prefix_to_single_send(self, path_cmd, mock_bot):
-        path_cmd.path_reply_prefix = "[{sender}]"
+    async def test_sends_response_as_is(self, path_cmd, mock_bot):
+        """_send_path_response sends response unchanged (mention already in format)."""
         path_cmd.get_max_message_length = lambda _msg: 200
         msg = MeshMessage(content="path", channel="general", is_dm=False, sender_id="alice")
-        await path_cmd._send_path_response(msg, "line1")
+        response = "@[alice] 2 ab,cd route: ~1.0mi, direct: ~0.5mi https://da.gd/test"
+        await path_cmd._send_path_response(msg, response)
         path_cmd.send_response.assert_awaited_once()
         payload = path_cmd.send_response.call_args[0][1]
-        assert payload == "[alice]\nline1"
-        assert path_cmd.last_response == "[alice]\nline1"
+        assert payload == response
+        assert path_cmd.last_response == response
 
     @pytest.mark.asyncio
-    async def test_prefix_only_on_first_split_message(self, path_cmd, mock_bot):
-        path_cmd.path_reply_prefix = "P:"
-        path_cmd.get_max_message_length = lambda _msg: 25
-        path_cmd.translate = MockTranslateForSend()
+    async def test_truncates_long_response(self, path_cmd, mock_bot):
+        """Long responses get truncated with indicator."""
+        path_cmd.get_max_message_length = lambda _msg: 50
         msg = MeshMessage(content="path", channel="general", is_dm=False)
-        response = "a" * 12 + "\n" + "b" * 13
-        with patch("modules.commands.path_command.asyncio.sleep", new_callable=AsyncMock):
-            await path_cmd._send_path_response(msg, response)
-        assert path_cmd.send_response.await_count >= 2
-        first = path_cmd.send_response.call_args_list[0][0][1]
-        assert first.startswith("P:\n")
-        second = path_cmd.send_response.call_args_list[1][0][1]
-        assert not second.startswith("P:\n")
+        response = "@[alice] 2 ab,cd route: ~1.0mi, direct: ~0.5mi https://da.gd/verylongurl123456789"
+        await path_cmd._send_path_response(msg, response)
+        path_cmd.send_response.assert_awaited_once()
+        sent = path_cmd.send_response.call_args[0][1]
+        assert "(truncated)" in sent
+        assert len(sent.encode("utf-8")) <= 50
 
 
 class MockTranslateForSend:

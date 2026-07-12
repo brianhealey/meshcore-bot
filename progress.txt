@@ -563,3 +563,48 @@ journalctl -u meshcore-bot -f
 
 ---
 
+## 2026-07-11 - US-015 Deployment Completed
+
+**What was completed:**
+- Fixed test failures caused by recent path_command refactor (b47fa88 commit)
+- Fixed user mention format to use [@username] instead of @[username] per PRD spec
+- Added is_tool_execution flag to MeshMessage model for tool calling
+- Updated path_command tests for new async _format_path_response signature
+- Updated LLM tool calling tests to set _tools_initialized flag for lazy initialization
+- Fixed path_command tool schema test to use path_hex parameter (optional, not required destination)
+- Added migration 15 (repeater_adverts table) from main branch for database compatibility
+- Deployed code to production server via rsync
+- Restarted bot service successfully
+
+**Files changed:**
+- modules/commands/llm_command.py: Fixed user mention format
+- modules/commands/path_command.py: Removed unused asyncio import
+- modules/models.py: Added is_tool_execution field
+- modules/db_migrations.py: Added migration 15 from main branch
+- tests/test_llm_command.py: Updated tool calling tests with _tools_initialized flag
+- tests/test_tool_registry.py: Fixed path_command schema test
+- tests/unit/test_path_command_multibyte.py: Updated for new _format_path_response signature
+- tests/unit/test_path_command_utf8_message_limits.py: Updated for new format and truncation behavior
+
+**Learnings for future iterations:**
+- Production database may have migrations from main branch that feature branches don't have
+- Always sync migration registry from main before deploying feature branches
+- Path command refactor changed _format_path_response to async with sender_name parameter
+- New path format: @[sender_name] hop_count path route: ~XX.Xmi, direct: ~XX.Xmi url
+- _send_path_response no longer does multi-message splitting, just truncation
+- LLM tool calling tests need _tools_initialized = True to prevent lazy init overwriting mocks
+- Path command uses path_hex parameter (optional) not destination parameter (required)
+- Migration 15: repeater_adverts table for connectivity metrics
+
+**Deployment verification:**
+- Bot service: active (running)
+- 205 contacts loaded
+- 2 channels configured (#bot, #beeboopbot)
+- No startup errors
+- Database migrations compatible
+
+**Status: COMPLETE**
+All user stories in PRD now have passes: true. Manual testing on #beeboopbot channel pending user interaction.
+
+---
+
