@@ -13,3 +13,54 @@ Started: Sat Jul 11 19:31:43 CDT 2026
   - MeshCore set_path_hash_mode() returns EventType.OK on success
   - Both path_hash_mode (0,1,2) and prefix_bytes (1,2,3) are accepted as input with automatic conversion
 ---
+
+## 2026-07-11 - US-003
+- Updated bot runtime prefix_bytes after successful radio path mode change
+- Files changed:
+  - modules/scheduler.py: Extended _path_mode_write_op() (lines ~1239-1251) to update bot.prefix_bytes and bot.prefix_hex_chars after successful radio write
+- **Learnings for future iterations:**
+  - Bot instance attributes like prefix_bytes/prefix_hex_chars are set in core.py __init__ (lines 162-164)
+  - These values are used throughout the codebase for path parsing (web_viewer, mesh_graph, commands)
+  - Updating runtime values in scheduler allows immediate effect without bot restart
+  - Use getattr() to safely get old value before update (avoids AttributeError if attribute missing)
+  - Pre-existing test failures exist (help_command, llm_command, path_command) unrelated to scheduler changes
+---
+
+## 2026-07-11 - US-004
+- Implemented GET /api/radio/path-mode/impact endpoint for path mode impact analysis
+- Files changed:
+  - modules/web_viewer/app.py: Added GET endpoint (lines ~3994-4065) with target query parameter validation
+- **Learnings for future iterations:**
+  - Impact analysis endpoints are synchronous DB queries (no async operation queue needed)
+  - Use `bytes_per_hop` column in `observed_paths` table to count affected paths
+  - Use `out_bytes_per_hop` column in `complete_contact_tracking` table to count affected contacts
+  - path_hash_mode (0,1,2) converts to prefix_bytes (1,2,3) via mode + 1
+  - Sample contacts limited to 10, ordered by last_heard DESC for recency
+  - Pre-existing test failures (23 total) are unrelated to this change
+---
+
+## 2026-07-11 - US-005
+- Created Advanced Settings card structure on radio page
+- Files changed:
+  - modules/web_viewer/templates/radio.html: Added Advanced Settings card (lines 135-166) with Bootstrap styling, fa-cogs icon header, 'Read from Device' button, loading spinner, and path mode settings placeholder. Added JavaScript handlers (setupAdvancedSettingsHandlers, readAdvancedSettings, updatePathModeDisplay, setAdvancedAlert).
+- **Learnings for future iterations:**
+  - Radio page uses Bootstrap card components for consistent styling
+  - Loading states use spinner-border class with display:none/inline-block toggle
+  - RadioManager class handles all page interactivity via event handlers
+  - Path mode API (GET /api/radio/path-mode) returns {path_hash_mode, prefix_bytes, status}
+  - Handle disconnected radio gracefully by showing 'N/A' in silent mode
+  - Pre-existing test failures (23 total) are unrelated to this change
+---
+
+## 2026-07-11 - US-006
+- Verified that display of current path mode was already implemented in US-005
+- No code changes needed - functionality complete in radio.html
+- Files reviewed:
+  - modules/web_viewer/templates/radio.html: Lines 280 (readAdvancedSettings on page load), 1068-1079 (updatePathModeDisplay formatting)
+- **Learnings for future iterations:**
+  - US-006 acceptance criteria were fully satisfied by US-005 implementation
+  - readAdvancedSettings({silent:true}) is called in initialize() for auto-fetch on page load
+  - updatePathModeDisplay() handles both success (shows "N bytes (N hex chars)") and disconnected state (shows "N/A (radio disconnected)")
+  - When UI stories build on each other, check if later stories are already implemented before starting
+  - Pre-existing test failures (23 total) are unrelated to this change
+---

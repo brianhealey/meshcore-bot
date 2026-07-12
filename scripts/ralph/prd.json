@@ -48,8 +48,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated _path_mode_write_op() in scheduler.py (lines 1239-1251) to set bot.prefix_bytes and bot.prefix_hex_chars after successful radio write. Logs INFO message and additional context when value changes."
     },
     {
       "id": "US-004",
@@ -64,8 +64,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added GET /api/radio/path-mode/impact endpoint to app.py (lines 3994-4065). Accepts target query param (0, 1, or 2), queries observed_paths and complete_contact_tracking tables for impact counts, returns JSON with affected_paths, affected_contacts, sample_contacts (max 10). Pre-existing test failures unrelated to these changes."
     },
     {
       "id": "US-005",
@@ -80,8 +80,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added Advanced Settings card to radio.html (lines 135-166). Card includes fa-cogs icon header with 'Read from Device' button, loading spinner, and path mode settings placeholder. JavaScript handlers added for fetching/displaying path mode data."
     },
     {
       "id": "US-006",
@@ -95,8 +95,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Functionality already implemented in US-005. Page load calls readAdvancedSettings({silent:true}) which fetches GET /api/radio/path-mode. updatePathModeDisplay() formats value as 'N bytes (N hex chars)'. Explanation text present. Disconnected state shows 'N/A (radio disconnected)'. No Python code changes needed."
     },
     {
       "id": "US-007",
