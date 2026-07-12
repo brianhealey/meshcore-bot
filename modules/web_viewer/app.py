@@ -3971,6 +3971,26 @@ class BotDataViewer:
                 self.logger.error(f"Error queuing radio params write: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        @self.app.route('/api/radio/path-mode', methods=['GET'])
+        def api_radio_path_mode_read():
+            """Queue a path hash mode read. Poll /api/channel-operations/<id>.
+
+            Returns:
+                JSON with operation_id to poll, or error if queuing fails.
+            """
+            try:
+                with self.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO channel_operations (operation_type, status) VALUES ('path_mode_read', 'pending')"
+                    )
+                    conn.commit()
+                    op_id = cursor.lastrowid
+                return jsonify({'success': True, 'operation_id': op_id})
+            except Exception as e:
+                self.logger.error(f"Error queuing path mode read: {e}")
+                return jsonify({'error': str(e)}), 500
+
     def _setup_socketio_handlers(self):
         """Setup SocketIO event handlers using modern patterns"""
 
