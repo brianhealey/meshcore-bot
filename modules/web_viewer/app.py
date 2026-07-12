@@ -3971,6 +3971,142 @@ class BotDataViewer:
                 self.logger.error(f"Error queuing radio params write: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        @self.app.route('/api/radio/path-mode', methods=['GET'])
+        def api_radio_path_mode_read():
+            """Queue a path hash mode read. Poll /api/channel-operations/<id>.
+
+            Returns:
+                JSON with operation_id to poll, or error if queuing fails.
+            """
+            try:
+                with self.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO channel_operations (operation_type, status) VALUES ('path_mode_read', 'pending')"
+                    )
+                    conn.commit()
+                    op_id = cursor.lastrowid
+                return jsonify({'success': True, 'operation_id': op_id})
+            except Exception as e:
+                self.logger.error(f"Error queuing path mode read: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/radio/path-mode/impact', methods=['GET'])
+        def api_radio_path_mode_impact():
+            """Analyze impact of changing path prefix bytes setting.
+
+            Query parameter:
+                target: Target path_hash_mode (0, 1, or 2) - required
+
+            Returns:
+                JSON with affected_paths, affected_contacts, sample_contacts (max 10).
+            """
+            try:
+                target_str = request.args.get('target')
+                if target_str is None:
+                    return jsonify({'error': 'target parameter required (0, 1, or 2)'}), 400
+
+                try:
+                    target = int(target_str)
+                except ValueError:
+                    return jsonify({'error': 'target must be an integer'}), 400
+
+                if target not in (0, 1, 2):
+                    return jsonify({'error': 'target must be 0, 1, or 2'}), 400
+
+                # Convert path_hash_mode to prefix_bytes (mode + 1)
+                target_bytes = target + 1
+
+                with self.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+
+                    # Count paths with different bytes_per_hop
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS cnt FROM observed_paths
+                        WHERE bytes_per_hop IS NOT NULL AND bytes_per_hop != ?
+                        """,
+                        (target_bytes,)
+                    )
+                    affected_paths = cursor.fetchone()['cnt']
+
+                    # Count contacts with different out_bytes_per_hop
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS cnt FROM complete_contact_tracking
+                        WHERE out_bytes_per_hop IS NOT NULL AND out_bytes_per_hop != ?
+                        """,
+                        (target_bytes,)
+                    )
+                    affected_contacts = cursor.fetchone()['cnt']
+
+                    # Get sample contact names (limit 10)
+                    cursor.execute(
+                        """
+                        SELECT name FROM complete_contact_tracking
+                        WHERE out_bytes_per_hop IS NOT NULL AND out_bytes_per_hop != ?
+                        ORDER BY last_heard DESC
+                        LIMIT 10
+                        """,
+                        (target_bytes,)
+                    )
+                    sample_contacts = [row['name'] for row in cursor.fetchall()]
+
+                return jsonify({
+                    'affected_paths': affected_paths,
+                    'affected_contacts': affected_contacts,
+                    'sample_contacts': sample_contacts,
+                    'target_mode': target,
+                    'target_bytes': target_bytes
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error analyzing path mode impact: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/radio/path-mode', methods=['POST'])
+        def api_radio_path_mode_write():
+            """Queue a path hash mode write. Poll /api/channel-operations/<id>.
+
+            Accepts JSON body with either:
+            - path_hash_mode: 0, 1, or 2
+            - prefix_bytes: 1, 2, or 3 (converted to path_hash_mode internally)
+
+            Returns:
+                JSON with operation_id to poll, or error if queuing/validation fails.
+            """
+            try:
+                data = request.get_json() or {}
+
+                # Accept either path_hash_mode or prefix_bytes
+                if 'path_hash_mode' in data:
+                    mode = int(data['path_hash_mode'])
+                    if mode not in (0, 1, 2):
+                        return jsonify({'error': 'path_hash_mode must be 0, 1, or 2'}), 400
+                elif 'prefix_bytes' in data:
+                    prefix_bytes = int(data['prefix_bytes'])
+                    if prefix_bytes not in (1, 2, 3):
+                        return jsonify({'error': 'prefix_bytes must be 1, 2, or 3'}), 400
+                    mode = prefix_bytes - 1  # Convert prefix_bytes to path_hash_mode
+                else:
+                    return jsonify({'error': 'path_hash_mode or prefix_bytes required'}), 400
+
+                payload = {'path_hash_mode': mode}
+                with self.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO channel_operations (operation_type, payload_data, status) VALUES ('path_mode_write', ?, 'pending')",
+                        (json.dumps(payload),)
+                    )
+                    conn.commit()
+                    op_id = cursor.lastrowid
+                return jsonify({'success': True, 'operation_id': op_id})
+            except ValueError:
+                return jsonify({'error': 'Invalid integer value provided'}), 400
+            except Exception as e:
+                self.logger.error(f"Error queuing path mode write: {e}")
+                return jsonify({'error': str(e)}), 500
+
     def _setup_socketio_handlers(self):
         """Setup SocketIO event handlers using modern patterns"""
 

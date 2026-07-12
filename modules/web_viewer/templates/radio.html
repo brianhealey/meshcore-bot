@@ -132,6 +132,41 @@
                 </div>
             </div>
 
+            <!-- Advanced Settings -->
+            <div class="card mb-4" id="advanced-settings-card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>Advanced Settings</h5>
+                    <button class="btn btn-sm btn-outline-secondary" id="readAdvancedSettingsBtn">
+                        <span class="spinner-border spinner-border-sm me-1" id="readAdvancedSpinner" style="display:none" role="status"></span>
+                        <i class="fas fa-sync me-1" id="readAdvancedIcon"></i>Read from Device
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="advancedSettingsAlert" style="display:none"></div>
+                    <div id="advancedSettingsLoading" class="text-center py-4">
+                        <span class="spinner-border text-secondary" role="status"></span>
+                        <p class="text-muted mt-2 mb-0">Loading settings...</p>
+                    </div>
+                    <div id="advancedSettingsContent" style="display:none">
+                        <!-- Path Mode Settings -->
+                        <div id="pathModeSettings">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-bold">Path Prefix Size</label>
+                                    <div id="pathModeDisplay" class="text-muted">
+                                        <span id="pathModeValue">Unknown</span>
+                                    </div>
+                                    <small class="form-text text-muted">
+                                        The number of bytes used to identify nodes in mesh routing paths.
+                                        Larger values support more unique nodes but increase message overhead.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Channel Management -->
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -240,7 +275,9 @@ class RadioManager {
         await this.loadRadioStatus();
         this.setupEventHandlers();
         this.setupRadioParamsHandlers();
+        this.setupAdvancedSettingsHandlers();
         this.readRadioParams({ silent: true });
+        this.readAdvancedSettings({ silent: true });
 
         // Auto-refresh every 30 seconds
         setInterval(() => this.loadChannels(), 30000);
@@ -964,6 +1001,86 @@ class RadioManager {
 
     setParamsAlert(type, message) {
         const el = document.getElementById('radioParamsAlert');
+        if (!type || !message) { el.style.display = 'none'; return; }
+        el.className = `alert alert-${type}`;
+        el.textContent = message;
+        el.style.display = 'block';
+    }
+
+    // Advanced Settings handlers
+    setupAdvancedSettingsHandlers() {
+        document.getElementById('readAdvancedSettingsBtn').addEventListener('click', () => this.readAdvancedSettings());
+    }
+
+    async readAdvancedSettings({ silent = false } = {}) {
+        const btn = document.getElementById('readAdvancedSettingsBtn');
+        const spinner = document.getElementById('readAdvancedSpinner');
+        const icon = document.getElementById('readAdvancedIcon');
+        const loadingDiv = document.getElementById('advancedSettingsLoading');
+        const contentDiv = document.getElementById('advancedSettingsContent');
+
+        btn.disabled = true;
+        spinner.style.display = 'inline-block';
+        icon.style.display = 'none';
+        if (!silent) {
+            this.setAdvancedAlert('', '');
+            loadingDiv.style.display = 'block';
+            contentDiv.style.display = 'none';
+        }
+
+        try {
+            const resp = await fetch('/api/radio/path-mode');
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                if (silent && (data.error || '').toLowerCase().includes('not connected')) {
+                    // Show content area but with 'N/A' values for disconnected state
+                    loadingDiv.style.display = 'none';
+                    contentDiv.style.display = 'block';
+                    this.updatePathModeDisplay(null);
+                    return;
+                }
+                this.setAdvancedAlert('danger', data.error || 'Failed to read path mode');
+                loadingDiv.style.display = 'none';
+                contentDiv.style.display = 'block';
+                this.updatePathModeDisplay(null);
+                return;
+            }
+
+            // Success - show content
+            loadingDiv.style.display = 'none';
+            contentDiv.style.display = 'block';
+            this.updatePathModeDisplay(data);
+            if (!silent) this.setAdvancedAlert('success', 'Advanced settings read successfully.');
+
+        } catch (e) {
+            if (!silent) this.setAdvancedAlert('danger', 'Error: ' + e.message);
+            loadingDiv.style.display = 'none';
+            contentDiv.style.display = 'block';
+            this.updatePathModeDisplay(null);
+        } finally {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+            icon.style.display = 'inline';
+        }
+    }
+
+    updatePathModeDisplay(data) {
+        const pathModeValue = document.getElementById('pathModeValue');
+        if (!data || data.status === 'error') {
+            pathModeValue.textContent = 'N/A (radio disconnected)';
+            pathModeValue.className = 'text-muted';
+            return;
+        }
+
+        const prefixBytes = data.prefix_bytes;
+        const hexChars = prefixBytes * 2;
+        pathModeValue.textContent = `${prefixBytes} byte${prefixBytes > 1 ? 's' : ''} (${hexChars} hex chars)`;
+        pathModeValue.className = 'text-success fw-bold';
+    }
+
+    setAdvancedAlert(type, message) {
+        const el = document.getElementById('advancedSettingsAlert');
         if (!type || !message) { el.style.display = 'none'; return; }
         el.className = `alert alert-${type}`;
         el.textContent = message;

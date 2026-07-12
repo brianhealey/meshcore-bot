@@ -954,7 +954,8 @@ class MessageScheduler:
                       AND operation_type IN (
                           'radio_reboot', 'radio_connect', 'radio_disconnect',
                           'firmware_read', 'firmware_write',
-                          'radio_params_read', 'radio_params_write'
+                          'radio_params_read', 'radio_params_write',
+                          'path_mode_read'
                       )
                     ORDER BY created_at ASC
                     LIMIT 1
@@ -986,6 +987,11 @@ class MessageScheduler:
                 elif op_type == 'radio_params_write':
                     payload = json.loads(op['payload_data'] or '{}')
                     success, result_payload = await self._radio_params_write_op(payload)
+                elif op_type == 'path_mode_read':
+                    success, result_payload = await self._path_mode_read_op()
+                elif op_type == 'path_mode_write':
+                    payload = json.loads(op['payload_data'] or '{}')
+                    success, result_payload = await self._path_mode_write_op(payload)
                 else:
                     success = False
 
@@ -1167,6 +1173,94 @@ class MessageScheduler:
         except Exception as e:
             self.logger.error(f"Radio params write failed: {e}")
             return False, {'error': str(e)}
+
+    async def _path_mode_read_op(self) -> tuple[bool, dict[str, Any]]:
+        """Read the path hash mode setting from the radio.
+
+        Returns:
+            Tuple of (success, result_dict). Result dict contains:
+            - path_hash_mode: int (0, 1, or 2)
+            - prefix_bytes: int (1, 2, or 3 = path_hash_mode + 1)
+            - status: 'ok' or 'error'
+        """
+        try:
+            meshcore = getattr(self.bot, 'meshcore', None)
+            if not meshcore or not getattr(meshcore, 'is_connected', False):
+                return False, {'error': 'Radio not connected', 'status': 'error'}
+
+            path_hash_mode = await asyncio.wait_for(
+                meshcore.commands.get_path_hash_mode(), timeout=10
+            )
+
+            prefix_bytes = path_hash_mode + 1
+            return True, {
+                'path_hash_mode': path_hash_mode,
+                'prefix_bytes': prefix_bytes,
+                'status': 'ok'
+            }
+        except asyncio.TimeoutError:
+            self.logger.error("Path mode read timed out after 10 seconds")
+            return False, {'error': 'Operation timed out', 'status': 'error'}
+        except Exception as e:
+            self.logger.error(f"Path mode read failed: {e}")
+            return False, {'error': str(e), 'status': 'error'}
+
+    async def _path_mode_write_op(self, payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        """Write the path hash mode setting to the radio.
+
+        Args:
+            payload: Dict with 'path_hash_mode' key (0, 1, or 2)
+
+        Returns:
+            Tuple of (success, result_dict). Result dict contains:
+            - path_hash_mode: int (0, 1, or 2) - the value that was set
+            - prefix_bytes: int (1, 2, or 3 = path_hash_mode + 1)
+            - status: 'ok' or 'error'
+        """
+        try:
+            meshcore = getattr(self.bot, 'meshcore', None)
+            if not meshcore or not getattr(meshcore, 'is_connected', False):
+                return False, {'error': 'Radio not connected', 'status': 'error'}
+
+            mode = int(payload.get('path_hash_mode', 0))
+            if mode not in (0, 1, 2):
+                return False, {'error': f'Invalid path_hash_mode: {mode}', 'status': 'error'}
+
+            result = await asyncio.wait_for(
+                meshcore.commands.set_path_hash_mode(mode), timeout=10
+            )
+
+            ok = getattr(result, 'type', None) == EventType.OK
+            if not ok:
+                return False, {'error': f'set_path_hash_mode({mode}) failed: {result}', 'status': 'error'}
+
+            prefix_bytes = mode + 1
+
+            # Update bot runtime values so new prefix is used immediately for path parsing
+            old_prefix_bytes = getattr(self.bot, 'prefix_bytes', None)
+            self.bot.prefix_bytes = prefix_bytes
+            self.bot.prefix_hex_chars = prefix_bytes * 2
+            self.logger.info(
+                f"Prefix mode changed to {prefix_bytes} bytes "
+                f"({prefix_bytes * 2} hex chars)"
+            )
+            if old_prefix_bytes is not None and old_prefix_bytes != prefix_bytes:
+                self.logger.info(
+                    f"Path parsing will now use {prefix_bytes}-byte prefixes "
+                    f"(was {old_prefix_bytes} bytes)"
+                )
+
+            return True, {
+                'path_hash_mode': mode,
+                'prefix_bytes': prefix_bytes,
+                'status': 'ok'
+            }
+        except asyncio.TimeoutError:
+            self.logger.error("Path mode write timed out after 10 seconds")
+            return False, {'error': 'Operation timed out', 'status': 'error'}
+        except Exception as e:
+            self.logger.error(f"Path mode write failed: {e}")
+            return False, {'error': str(e), 'status': 'error'}
 
     # ── Maintenance (delegates to MaintenanceRunner) ─────────────────────────
 
