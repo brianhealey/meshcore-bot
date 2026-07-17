@@ -1,0 +1,13 @@
+# Ralph Progress Log - Path Prefix Settings
+
+## Codebase Patterns
+- MeshCore library has `get_path_hash_mode()` and `set_path_hash_mode(mode)` methods
+- path_hash_mode values: 0=1byte, 1=2bytes, 2=3bytes (prefix_bytes = mode + 1)
+- Radio operations use async operation queue pattern (see channel operations in app.py)
+- Web viewer API endpoints follow RESTful pattern in modules/web_viewer/app.py
+- Radio page uses RadioManager JS class for state management
+- Use Bootstrap modals and toasts for user feedback (see existing radio.html patterns)
+- Bot runtime values: bot.prefix_bytes and bot.prefix_hex_chars (set in core.py)
+
+---
+

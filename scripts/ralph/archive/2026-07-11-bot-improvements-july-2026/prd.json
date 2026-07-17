@@ -1,0 +1,200 @@
+{
+  "project": "MeshCore Bot",
+  "branchName": "ralph/path-prefix-settings",
+  "description": "Path Prefix Bytes Settings - View and configure the path prefix bytes setting on the radio page with impact analysis",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add API endpoint to read path hash mode from radio",
+      "description": "As an operator, I need an API to get the current path hash mode from the radio so the UI can display it.",
+      "acceptanceCriteria": [
+        "Add GET /api/radio/path-mode endpoint to web_viewer/app.py",
+        "Call MeshCore get_path_hash_mode() via async operation queue",
+        "Return JSON: {path_hash_mode: 0|1|2, prefix_bytes: 1|2|3, status: 'ok'|'error'}",
+        "Return appropriate error if radio not connected",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Add API endpoint to write path hash mode to radio",
+      "description": "As an operator, I need an API to change the path hash mode on the radio.",
+      "acceptanceCriteria": [
+        "Add POST /api/radio/path-mode endpoint to web_viewer/app.py",
+        "Accept JSON body: {path_hash_mode: 0|1|2} or {prefix_bytes: 1|2|3}",
+        "Validate input is 0, 1, or 2 (or 1, 2, 3 for prefix_bytes)",
+        "Call MeshCore set_path_hash_mode(mode) via async operation queue",
+        "Return success/failure status",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Update bot runtime prefix_bytes after radio change",
+      "description": "As a developer, I need the bot to use the new prefix_bytes value after it's changed on the radio.",
+      "acceptanceCriteria": [
+        "After successful POST /api/radio/path-mode, update bot.prefix_bytes",
+        "Also update bot.prefix_hex_chars = prefix_bytes * 2",
+        "Log the change at INFO level: 'Prefix mode changed to N bytes'",
+        "New value is used immediately for path parsing without restart",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Add API endpoint for path mode impact analysis",
+      "description": "As an operator, I need to see how changing prefix bytes would affect stored paths and contacts.",
+      "acceptanceCriteria": [
+        "Add GET /api/radio/path-mode/impact?target=N endpoint (N = 0, 1, or 2)",
+        "Query observed_paths table for count where bytes_per_hop != target+1",
+        "Query complete_contact_tracking for count where out_bytes_per_hop != target+1",
+        "Return JSON: {affected_paths: N, affected_contacts: N, sample_contacts: [...]}",
+        "Limit sample_contacts to 10 names",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Create Advanced Settings card structure on radio page",
+      "description": "As an operator, I want to see advanced radio settings in a dedicated section.",
+      "acceptanceCriteria": [
+        "Add 'Advanced Settings' card below Radio Parameters card in radio.html",
+        "Card uses consistent styling with existing cards (Bootstrap card)",
+        "Card includes header with icon and 'Read from Device' button",
+        "Card body has placeholder div for path mode settings",
+        "Card shows loading state while fetching settings",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Display current path mode in Advanced Settings card",
+      "description": "As an operator, I want to see the current path prefix bytes value with clear explanation.",
+      "acceptanceCriteria": [
+        "On page load, call GET /api/radio/path-mode to fetch current value",
+        "Display label 'Path Prefix Size' with current value: '1 byte (2 hex chars)' etc",
+        "Include brief explanation text below the value",
+        "Show 'Unknown' or 'N/A' when radio is disconnected",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Add path mode selector dropdown",
+      "description": "As an operator, I want to select a different path prefix size to change routing.",
+      "acceptanceCriteria": [
+        "Add dropdown/select with options: '1 byte (2 hex)', '2 bytes (4 hex)', '3 bytes (6 hex)'",
+        "Current radio value is pre-selected on load",
+        "Selector is disabled when radio is disconnected",
+        "Selection change triggers impact analysis fetch",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Display impact analysis when selection changes",
+      "description": "As an operator, I want to see how many contacts and paths would be affected before changing.",
+      "acceptanceCriteria": [
+        "When dropdown selection differs from current value, call impact API",
+        "Display impact summary: 'X paths and Y contacts use different prefix width'",
+        "Show warning icon with yellow/orange styling when impact > 0",
+        "List up to 5 affected contact names as examples",
+        "Hide impact section when selection matches current value",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add confirmation modal for path mode change",
+      "description": "As an operator, I want to confirm before changing path prefix size to avoid accidents.",
+      "acceptanceCriteria": [
+        "Add 'Write to Device' button that triggers Bootstrap confirmation modal",
+        "Modal shows current value and new value clearly",
+        "Modal displays impact summary (paths/contacts affected count)",
+        "Modal includes warning text about mesh routing implications",
+        "Modal has 'Cancel' and 'Confirm Change' buttons",
+        "Button is disabled when selection equals current value",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Implement path mode write with feedback",
+      "description": "As an operator, I want to save my path mode change and see confirmation.",
+      "acceptanceCriteria": [
+        "Clicking 'Confirm Change' calls POST /api/radio/path-mode",
+        "Show spinner/loading state while operation in progress",
+        "Poll operation status (follow existing channel operation pattern)",
+        "Show success toast notification on completion",
+        "Show error toast if write fails with error message",
+        "Refresh displayed value after successful write",
+        "Close modal on success",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Show path mode mismatch warning indicator",
+      "description": "As an operator, I want to be warned if stored paths use a different prefix width than current setting.",
+      "acceptanceCriteria": [
+        "After reading current path mode, check if any paths have different bytes_per_hop",
+        "If mismatch exists, show warning badge next to current value",
+        "Warning text: 'Some stored paths use different prefix width'",
+        "Clicking warning shows count breakdown by bytes_per_hop",
+        "Use Bootstrap popover or collapse for details",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Add unit tests for path mode API endpoints",
+      "description": "As a developer, I need tests to verify the path mode API endpoints work correctly.",
+      "acceptanceCriteria": [
+        "Create tests for GET /api/radio/path-mode endpoint",
+        "Create tests for POST /api/radio/path-mode endpoint",
+        "Create tests for GET /api/radio/path-mode/impact endpoint",
+        "Test validation of invalid input values",
+        "Test error handling when radio disconnected",
+        "All tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

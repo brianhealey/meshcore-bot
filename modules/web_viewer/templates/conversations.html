@@ -1,0 +1,932 @@
+{% extends "base.html" %}
+
+{% block title %}Conversations - MeshCore Bot Data Viewer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .conversations-container {
+        display: flex;
+        height: calc(100vh - 180px);
+        min-height: 400px;
+        gap: 1rem;
+    }
+
+    /* Sidebar */
+    .conversations-sidebar {
+        width: 320px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 0.375rem;
+    }
+
+    .sidebar-header {
+        padding: 1rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar-search {
+        width: 100%;
+    }
+
+    .conv-type-filters {
+        display: flex;
+        gap: 0.25rem;
+        margin-top: 0.75rem;
+    }
+
+    .conv-type-filters .btn {
+        flex: 1;
+        padding: 0.375rem 0.5rem;
+        font-size: 0.8125rem;
+    }
+
+    .conv-type-filters .btn.active {
+        font-weight: 600;
+    }
+
+    .conversation-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.5rem;
+    }
+
+    .conversation-item {
+        padding: 0.75rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        margin-bottom: 0.25rem;
+        border: 1px solid transparent;
+        transition: background-color 0.15s, border-color 0.15s;
+    }
+
+    .conversation-item:hover {
+        background-color: var(--hover-bg, rgba(0,0,0,0.05));
+    }
+
+    .conversation-item.selected {
+        background-color: var(--bs-primary);
+        color: white;
+        border-color: var(--bs-primary);
+    }
+
+    .conversation-item.selected .text-muted {
+        color: rgba(255,255,255,0.75) !important;
+    }
+
+    .conv-icon {
+        width: 2rem;
+        height: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--bs-secondary-bg);
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    .conversation-item.selected .conv-icon {
+        background-color: rgba(255,255,255,0.2);
+    }
+
+    .conv-name {
+        font-weight: 500;
+        font-size: 0.9375rem;
+    }
+
+    .conv-preview {
+        font-size: 0.8125rem;
+        opacity: 0.8;
+    }
+
+    .conv-time {
+        font-size: 0.75rem;
+    }
+
+    /* Thread View */
+    .conversation-thread {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 0.375rem;
+        min-width: 0;
+    }
+
+    .thread-header {
+        padding: 1rem;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .thread-header-info h5 {
+        margin-bottom: 0.125rem;
+    }
+
+    .message-container {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+    }
+
+    .date-separator {
+        text-align: center;
+        margin: 1rem 0;
+    }
+
+    .date-separator .badge {
+        font-weight: 500;
+        font-size: 0.75rem;
+    }
+
+    .message-bubble {
+        max-width: 85%;
+        margin-bottom: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 1rem;
+        background-color: var(--bs-secondary-bg);
+    }
+
+    .message-bubble.outbound {
+        margin-left: auto;
+        background-color: var(--bs-primary);
+        color: white;
+        border-bottom-right-radius: 0.25rem;
+    }
+
+    .message-bubble.inbound {
+        margin-right: auto;
+        border-bottom-left-radius: 0.25rem;
+    }
+
+    .message-header {
+        margin-bottom: 0.25rem;
+    }
+
+    .sender-name {
+        font-size: 0.8125rem;
+    }
+
+    .message-time {
+        font-size: 0.6875rem;
+    }
+
+    .message-content {
+        word-wrap: break-word;
+        white-space: pre-wrap;
+    }
+
+    .message-meta {
+        display: flex;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+
+    .message-meta .badge {
+        font-size: 0.6875rem;
+        font-weight: 500;
+    }
+
+    .message-bubble.outbound .message-meta .badge {
+        background-color: rgba(255,255,255,0.2) !important;
+        color: white;
+    }
+
+    /* Search Results */
+    .search-result-item {
+        padding: 0.75rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        margin-bottom: 0.25rem;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+    }
+
+    .search-result-item:hover {
+        background-color: var(--hover-bg, rgba(0,0,0,0.05));
+    }
+
+    .search-snippet {
+        background-color: var(--bs-warning-bg-subtle);
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        margin-top: 0.25rem;
+    }
+
+    .search-snippet mark {
+        background-color: var(--bs-warning);
+        padding: 0 0.125rem;
+        border-radius: 0.125rem;
+    }
+
+    /* Empty States */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 2rem;
+        text-align: center;
+        color: var(--text-muted);
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+
+    /* Loading */
+    .loading-spinner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+    }
+
+    /* Mobile Responsive */
+    @media (max-width: 767.98px) {
+        .conversations-container {
+            flex-direction: column;
+            height: auto;
+        }
+
+        .conversations-sidebar {
+            width: 100%;
+            max-height: 50vh;
+        }
+
+        .conversations-sidebar.hidden {
+            display: none;
+        }
+
+        .conversation-thread {
+            min-height: 50vh;
+        }
+
+        .conversation-thread.hidden {
+            display: none;
+        }
+
+        .mobile-back-btn {
+            display: inline-flex !important;
+        }
+    }
+
+    @media (min-width: 768px) {
+        .mobile-back-btn {
+            display: none !important;
+        }
+    }
+
+    /* Dark mode adjustments */
+    [data-theme="dark"] .conversation-item:hover {
+        background-color: rgba(255,255,255,0.05);
+    }
+
+    [data-theme="dark"] .search-snippet {
+        background-color: rgba(255, 193, 7, 0.15);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-12">
+        <h1 class="mb-0">
+            <i class="fas fa-comments"></i> Conversation History
+        </h1>
+    </div>
+</div>
+
+<div class="conversations-container">
+    <!-- Sidebar -->
+    <div class="conversations-sidebar" id="conversations-sidebar">
+        <div class="sidebar-header">
+            <div class="input-group sidebar-search">
+                <span class="input-group-text">
+                    <i class="fas fa-search"></i>
+                </span>
+                <input type="text" class="form-control" id="global-search" placeholder="Search messages..." autocomplete="off">
+            </div>
+            <div class="conv-type-filters btn-group" role="group">
+                <button type="button" class="btn btn-outline-secondary conv-type-filter active" data-type="all">All</button>
+                <button type="button" class="btn btn-outline-secondary conv-type-filter" data-type="dm">DMs</button>
+                <button type="button" class="btn btn-outline-secondary conv-type-filter" data-type="channel">Channels</button>
+            </div>
+        </div>
+        <div class="conversation-list" id="conversation-list">
+            <div class="loading-spinner">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thread View -->
+    <div class="conversation-thread" id="conversation-thread">
+        <div class="thread-header" id="thread-header">
+            <div class="thread-header-info d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-outline-secondary mobile-back-btn" onclick="conversationManager.showSidebar()">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
+                <div>
+                    <h5 class="mb-0"><i class="fas fa-comments me-2 text-muted"></i>Select a conversation</h5>
+                    <small class="text-muted">Choose a conversation from the list to view messages</small>
+                </div>
+            </div>
+        </div>
+        <div class="message-container" id="message-container">
+            <div class="empty-state">
+                <i class="fas fa-comments"></i>
+                <p>Select a conversation to view messages</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/**
+ * ConversationManager - Handles conversation history UI
+ */
+class ConversationManager {
+    constructor() {
+        this.conversations = [];
+        this.selectedConversation = null;
+        this.messages = [];
+        this.filterType = 'all';
+        this.isLoading = false;
+        this.hasMoreMessages = true;
+        this.searchQuery = '';
+        this.searchTimeout = null;
+
+        this.init();
+    }
+
+    async init() {
+        this.bindElements();
+        this.setupEventHandlers();
+        this.setupSocketConnection();
+        await this.loadConversations();
+    }
+
+    bindElements() {
+        this.sidebarEl = document.getElementById('conversations-sidebar');
+        this.threadEl = document.getElementById('conversation-thread');
+        this.searchInput = document.getElementById('global-search');
+        this.messageContainer = document.getElementById('message-container');
+        this.conversationList = document.getElementById('conversation-list');
+        this.threadHeader = document.getElementById('thread-header');
+    }
+
+    setupEventHandlers() {
+        // Tab filters
+        document.querySelectorAll('.conv-type-filter').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                this.filterType = e.target.dataset.type;
+                document.querySelectorAll('.conv-type-filter').forEach(b =>
+                    b.classList.toggle('active', b === e.target));
+                if (this.searchQuery) {
+                    this.performSearch();
+                } else {
+                    this.loadConversations();
+                }
+            });
+        });
+
+        // Search with debounce
+        this.searchInput?.addEventListener('input', (e) => {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(() => {
+                this.searchQuery = e.target.value.trim();
+                if (this.searchQuery.length >= 2) {
+                    this.performSearch();
+                } else if (this.searchQuery.length === 0) {
+                    this.loadConversations();
+                }
+            }, 300);
+        });
+
+        // Infinite scroll for messages
+        this.messageContainer?.addEventListener('scroll', () => {
+            if (this.messageContainer.scrollTop < 100 &&
+                !this.isLoading &&
+                this.hasMoreMessages &&
+                this.selectedConversation) {
+                this.loadOlderMessages();
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                this.searchInput?.focus();
+            }
+            if (e.key === 'Escape') {
+                if (this.searchQuery) {
+                    this.searchInput.value = '';
+                    this.searchQuery = '';
+                    this.loadConversations();
+                } else if (window.innerWidth < 768 && this.selectedConversation) {
+                    this.showSidebar();
+                }
+            }
+        });
+    }
+
+    setupSocketConnection() {
+        const socket = window.connectionManager?.socket;
+        if (socket) {
+            socket.emit('subscribe_messages');
+            socket.on('message_data', (data) => this.onNewMessage(data));
+        }
+    }
+
+    async loadConversations() {
+        this.isLoading = true;
+        this.showLoading('conversation-list');
+
+        try {
+            const response = await fetch(
+                `/api/conversations/list?type=${this.filterType}&limit=100`,
+                { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+            );
+            const data = await response.json();
+
+            if (data.error) {
+                this.showError(data.error);
+                return;
+            }
+
+            this.conversations = data.conversations || [];
+            this.renderConversationList();
+        } catch (error) {
+            console.error('Error loading conversations:', error);
+            this.showError('Failed to load conversations');
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    async loadMessages(conversation) {
+        this.selectedConversation = conversation;
+        this.messages = [];
+        this.hasMoreMessages = true;
+        this.isLoading = true;
+        this.showLoading('message-container');
+
+        const params = conversation.type === 'dm'
+            ? `partner_id=${encodeURIComponent(conversation.partner_id)}`
+            : `channel=${encodeURIComponent(conversation.channel_name)}`;
+
+        try {
+            const response = await fetch(
+                `/api/conversations/messages?${params}&limit=100`,
+                { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+            );
+            const data = await response.json();
+
+            this.messages = data.messages || [];
+            this.hasMoreMessages = data.has_more || false;
+            this.renderMessages();
+            this.scrollToBottom();
+        } catch (error) {
+            console.error('Error loading messages:', error);
+            this.showError('Failed to load messages');
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    async loadOlderMessages() {
+        if (!this.selectedConversation || !this.messages.length) return;
+
+        this.isLoading = true;
+        const oldestTs = this.messages[0]?.timestamp;
+        if (!oldestTs) return;
+
+        const params = this.selectedConversation.type === 'dm'
+            ? `partner_id=${encodeURIComponent(this.selectedConversation.partner_id)}`
+            : `channel=${encodeURIComponent(this.selectedConversation.channel_name)}`;
+
+        try {
+            const scrollHeight = this.messageContainer.scrollHeight;
+            const response = await fetch(
+                `/api/conversations/messages?${params}&before=${oldestTs}&limit=50`,
+                { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+            );
+            const data = await response.json();
+
+            // Prepend older messages
+            this.messages = [...(data.messages || []), ...this.messages];
+            this.hasMoreMessages = data.has_more || false;
+            this.renderMessages();
+
+            // Maintain scroll position
+            this.messageContainer.scrollTop =
+                this.messageContainer.scrollHeight - scrollHeight;
+        } catch (error) {
+            console.error('Error loading older messages:', error);
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    async performSearch() {
+        this.isLoading = true;
+        this.showLoading('conversation-list');
+
+        try {
+            const response = await fetch(
+                `/api/conversations/search?q=${encodeURIComponent(this.searchQuery)}&type=${this.filterType}&limit=100`,
+                { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+            );
+            const data = await response.json();
+
+            this.renderSearchResults(data.results || []);
+        } catch (error) {
+            console.error('Search error:', error);
+            this.showError('Search failed');
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    onNewMessage(message) {
+        if (!message) return;
+
+        // Update conversation list order
+        const convId = message.is_dm ? (message.sender || message.sender_id) : message.channel;
+        const existingIdx = this.conversations.findIndex(c =>
+            (c.type === 'dm' && c.partner_id === convId) ||
+            (c.type === 'channel' && c.channel_name === convId)
+        );
+
+        if (existingIdx >= 0) {
+            const conv = this.conversations.splice(existingIdx, 1)[0];
+            conv.last_message_preview = (message.content || '').substring(0, 100);
+            conv.last_message_time = message.timestamp || Date.now() / 1000;
+            this.conversations.unshift(conv);
+            this.renderConversationList();
+        }
+
+        // Add to current thread if matches
+        if (this.selectedConversation) {
+            const matches = (
+                (this.selectedConversation.type === 'dm' &&
+                 (message.sender === this.selectedConversation.partner_id ||
+                  message.sender_id === this.selectedConversation.partner_id)) ||
+                (this.selectedConversation.type === 'channel' &&
+                 message.channel === this.selectedConversation.channel_name)
+            );
+
+            if (matches) {
+                this.messages.push({
+                    sender_id: message.sender || message.sender_id,
+                    sender_name: (message.sender || message.sender_id || '').substring(0, 20),
+                    content: message.content,
+                    timestamp: message.timestamp || Date.now() / 1000,
+                    is_dm: message.is_dm,
+                    hops: message.hops,
+                    snr: message.snr
+                });
+                this.renderMessages();
+                this.scrollToBottom();
+            }
+        }
+    }
+
+    renderConversationList() {
+        if (!this.conversationList) return;
+
+        if (this.conversations.length === 0) {
+            this.conversationList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No conversations yet</p>
+                    <small class="text-muted">Messages will appear here when received</small>
+                </div>
+            `;
+            return;
+        }
+
+        this.conversationList.innerHTML = this.conversations.map(conv => {
+            const isSelected = this.selectedConversation && (
+                (conv.type === 'dm' && conv.partner_id === this.selectedConversation.partner_id) ||
+                (conv.type === 'channel' && conv.channel_name === this.selectedConversation.channel_name)
+            );
+
+            const icon = conv.type === 'dm' ? 'fa-user' : 'fa-hashtag';
+            const name = conv.type === 'dm' ? conv.partner_name : conv.channel_name;
+            const time = this.formatRelativeTime(conv.last_message_time);
+
+            return `
+                <div class="conversation-item ${isSelected ? 'selected' : ''}"
+                     data-type="${conv.type}"
+                     data-id="${this.escapeAttr(conv.type === 'dm' ? conv.partner_id : conv.channel_name)}"
+                     onclick="conversationManager.selectConversation(this)">
+                    <div class="d-flex align-items-start gap-2">
+                        <div class="conv-icon">
+                            <i class="fas ${icon}"></i>
+                        </div>
+                        <div class="flex-grow-1 min-width-0">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="conv-name text-truncate">${this.escapeHtml(name)}</span>
+                                <span class="conv-time text-muted">${time}</span>
+                            </div>
+                            <div class="conv-preview text-muted text-truncate">
+                                ${this.escapeHtml(conv.last_message_preview || '')}
+                            </div>
+                            <small class="text-muted">${conv.message_count || 0} messages</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    renderMessages() {
+        if (!this.messageContainer) return;
+
+        if (this.messages.length === 0) {
+            this.messageContainer.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-comment-slash"></i>
+                    <p>No messages in this conversation</p>
+                </div>
+            `;
+            return;
+        }
+
+        let lastDate = null;
+        let html = '';
+
+        if (this.hasMoreMessages) {
+            html += `
+                <div class="text-center py-2">
+                    <button class="btn btn-sm btn-outline-secondary"
+                            onclick="conversationManager.loadOlderMessages()">
+                        <i class="fas fa-arrow-up me-1"></i> Load older messages
+                    </button>
+                </div>
+            `;
+        }
+
+        this.messages.forEach(msg => {
+            const msgDate = new Date(msg.timestamp * 1000).toDateString();
+
+            // Date separator
+            if (msgDate !== lastDate) {
+                html += `
+                    <div class="date-separator">
+                        <span class="badge bg-secondary">${msgDate}</span>
+                    </div>
+                `;
+                lastDate = msgDate;
+            }
+
+            const time = new Date(msg.timestamp * 1000).toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit'
+            });
+
+            // Check if outbound (bot message)
+            const senderLower = (msg.sender_name || msg.sender_id || '').toLowerCase();
+            const isOutbound = senderLower.includes('bot') || senderLower.includes('mcbot');
+
+            html += `
+                <div class="message-bubble ${isOutbound ? 'outbound' : 'inbound'}">
+                    <div class="message-header d-flex justify-content-between align-items-center">
+                        <span class="sender-name fw-semibold">${this.escapeHtml(msg.sender_name || msg.sender_id || 'Unknown')}</span>
+                        <span class="message-time text-muted">${time}</span>
+                    </div>
+                    <div class="message-content">${this.escapeHtml(msg.content || '')}</div>
+                    ${(msg.hops !== undefined && msg.hops !== null) || (msg.snr !== undefined && msg.snr !== null) ? `
+                        <div class="message-meta mt-1">
+                            ${msg.snr !== undefined && msg.snr !== null ? `<span class="badge bg-primary">SNR: ${msg.snr}</span>` : ''}
+                            ${msg.hops !== undefined && msg.hops !== null ? `<span class="badge bg-info">${msg.hops} hops</span>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        });
+
+        this.messageContainer.innerHTML = html;
+    }
+
+    renderSearchResults(results) {
+        if (!this.conversationList) return;
+
+        if (results.length === 0) {
+            this.conversationList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-search"></i>
+                    <p>No results found</p>
+                    <small class="text-muted">Try a different search term</small>
+                </div>
+            `;
+            return;
+        }
+
+        this.conversationList.innerHTML = results.map(result => `
+            <div class="search-result-item"
+                 onclick="conversationManager.jumpToResult('${result.is_dm ? 'dm' : 'channel'}', '${this.escapeAttr(result.is_dm ? result.sender_id : result.channel)}')">
+                <div class="d-flex align-items-start gap-2">
+                    <div class="conv-icon">
+                        <i class="fas ${result.is_dm ? 'fa-user' : 'fa-hashtag'}"></i>
+                    </div>
+                    <div class="flex-grow-1 min-width-0">
+                        <div class="d-flex justify-content-between">
+                            <span class="fw-semibold">${this.escapeHtml(result.sender_name || result.sender_id || 'Unknown')}</span>
+                            <span class="text-muted small">${this.formatRelativeTime(result.timestamp)}</span>
+                        </div>
+                        <div class="search-snippet small">${this.escapeHtml(result.content || '')}</div>
+                        <div class="text-muted" style="font-size: 0.75rem;">
+                            in ${result.is_dm ? 'DM' : '#' + (result.channel || 'unknown')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    selectConversation(el) {
+        const type = el.dataset.type;
+        const id = el.dataset.id;
+
+        const conv = this.conversations.find(c =>
+            (type === 'dm' && c.partner_id === id) ||
+            (type === 'channel' && c.channel_name === id)
+        );
+
+        if (conv) {
+            this.loadMessages(conv);
+            this.updateThreadHeader(conv);
+
+            // Update selected state
+            document.querySelectorAll('.conversation-item').forEach(item =>
+                item.classList.remove('selected'));
+            el.classList.add('selected');
+
+            // On mobile, show thread view
+            if (window.innerWidth < 768) {
+                this.sidebarEl?.classList.add('hidden');
+                this.threadEl?.classList.remove('hidden');
+            }
+        }
+    }
+
+    jumpToResult(type, id) {
+        // Create a temporary conversation object and load it
+        const conv = type === 'dm'
+            ? { type: 'dm', partner_id: id, partner_name: id.substring(0, 20) }
+            : { type: 'channel', channel_name: id };
+
+        this.loadMessages(conv);
+        this.updateThreadHeader(conv);
+
+        // Clear search
+        this.searchInput.value = '';
+        this.searchQuery = '';
+        this.loadConversations();
+
+        // On mobile, show thread view
+        if (window.innerWidth < 768) {
+            this.sidebarEl?.classList.add('hidden');
+            this.threadEl?.classList.remove('hidden');
+        }
+    }
+
+    updateThreadHeader(conv) {
+        if (!this.threadHeader) return;
+
+        const exportDropdown = `
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="fas fa-download"></i> Export
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#" onclick="conversationManager.exportConversation('json');return false;"><i class="fas fa-file-code me-2"></i>JSON</a></li>
+                    <li><a class="dropdown-item" href="#" onclick="conversationManager.exportConversation('csv');return false;"><i class="fas fa-file-csv me-2"></i>CSV</a></li>
+                    <li><a class="dropdown-item" href="#" onclick="conversationManager.exportConversation('txt');return false;"><i class="fas fa-file-alt me-2"></i>Text</a></li>
+                </ul>
+            </div>
+        `;
+
+        if (conv.type === 'dm') {
+            this.threadHeader.innerHTML = `
+                <div class="thread-header-info d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-secondary mobile-back-btn" onclick="conversationManager.showSidebar()">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <div>
+                        <h5 class="mb-0"><i class="fas fa-user me-2"></i>${this.escapeHtml(conv.partner_name || conv.partner_id)}</h5>
+                        <small class="text-muted">Direct Message</small>
+                    </div>
+                </div>
+                ${exportDropdown}
+            `;
+        } else {
+            this.threadHeader.innerHTML = `
+                <div class="thread-header-info d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-secondary mobile-back-btn" onclick="conversationManager.showSidebar()">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <div>
+                        <h5 class="mb-0"><i class="fas fa-hashtag me-2"></i>${this.escapeHtml(conv.channel_name)}</h5>
+                        <small class="text-muted">Channel</small>
+                    </div>
+                </div>
+                ${exportDropdown}
+            `;
+        }
+    }
+
+    exportConversation(format) {
+        if (!this.selectedConversation) return;
+
+        const params = this.selectedConversation.type === 'dm'
+            ? `partner_id=${encodeURIComponent(this.selectedConversation.partner_id)}`
+            : `channel=${encodeURIComponent(this.selectedConversation.channel_name)}`;
+
+        window.location.href = `/api/conversations/export?${params}&format=${format}`;
+    }
+
+    showSidebar() {
+        this.sidebarEl?.classList.remove('hidden');
+        this.threadEl?.classList.add('hidden');
+    }
+
+    // Utility methods
+    formatRelativeTime(timestamp) {
+        if (!timestamp) return '';
+        const now = Date.now() / 1000;
+        const diff = now - timestamp;
+
+        if (diff < 60) return 'now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+        return new Date(timestamp * 1000).toLocaleDateString();
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    escapeAttr(text) {
+        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    scrollToBottom() {
+        if (this.messageContainer) {
+            this.messageContainer.scrollTop = this.messageContainer.scrollHeight;
+        }
+    }
+
+    showLoading(containerId) {
+        const container = document.getElementById(containerId);
+        if (container) {
+            container.innerHTML = `
+                <div class="loading-spinner">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    showError(message) {
+        console.error(message);
+        const container = this.conversationList || this.messageContainer;
+        if (container) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                    <p>${this.escapeHtml(message)}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+// Initialize on DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+    window.conversationManager = new ConversationManager();
+});
+</script>
+{% endblock %}

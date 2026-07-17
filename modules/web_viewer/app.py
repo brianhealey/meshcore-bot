@@ -1367,6 +1367,11 @@ class BotDataViewer:
             """Radio settings page"""
             return render_template('radio.html')
 
+        @self.app.route('/conversations')
+        def conversations():
+            """Conversation history page"""
+            return render_template('conversations.html')
+
         @self.app.route('/config')
         def config_page():
             """Bot configuration page"""
@@ -2722,6 +2727,304 @@ class BotDataViewer:
 
             except Exception as e:
                 self.logger.error(f"Error getting recent commands: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        # ── Conversations API ────────────────────────────────────────────────
+
+        @self.app.route('/api/conversations/list')
+        def api_conversations_list():
+            """List all conversations (DMs and channels with message history).
+            Query params: type=all|dm|channel, limit=50"""
+            try:
+                conv_type = request.args.get('type', 'all')
+                limit = min(int(request.args.get('limit', 50)), 200)
+
+                conversations = []
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    # Check if message_stats table exists
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='message_stats'"
+                    )
+                    if not cursor.fetchone():
+                        return jsonify({'conversations': [], 'error': 'Message stats not enabled'})
+
+                    if conv_type in ('dm', 'all'):
+                        # Get DM conversations
+                        cursor.execute('''
+                            SELECT sender_id, MAX(timestamp) as last_ts, COUNT(*) as cnt,
+                                   (SELECT content FROM message_stats m2
+                                    WHERE m2.sender_id = message_stats.sender_id AND m2.is_dm = 1
+                                    ORDER BY m2.timestamp DESC LIMIT 1) as last_msg
+                            FROM message_stats
+                            WHERE is_dm = 1
+                            GROUP BY sender_id
+                            ORDER BY last_ts DESC
+                            LIMIT ?
+                        ''', (limit,))
+
+                        for row in cursor.fetchall():
+                            sender_id = row['sender_id'] or ''
+                            conversations.append({
+                                'type': 'dm',
+                                'partner_id': sender_id,
+                                'partner_name': sender_id[:20] if sender_id else 'Unknown',
+                                'last_message_time': row['last_ts'],
+                                'last_message_preview': (row['last_msg'] or '')[:100],
+                                'message_count': row['cnt']
+                            })
+
+                    if conv_type in ('channel', 'all'):
+                        # Get channel conversations
+                        cursor.execute('''
+                            SELECT channel, MAX(timestamp) as last_ts, COUNT(*) as cnt,
+                                   (SELECT content FROM message_stats m2
+                                    WHERE m2.channel = message_stats.channel
+                                    ORDER BY m2.timestamp DESC LIMIT 1) as last_msg
+                            FROM message_stats
+                            WHERE channel IS NOT NULL AND channel != '' AND is_dm = 0
+                            GROUP BY channel
+                            ORDER BY last_ts DESC
+                            LIMIT ?
+                        ''', (limit,))
+
+                        for row in cursor.fetchall():
+                            conversations.append({
+                                'type': 'channel',
+                                'channel_name': row['channel'],
+                                'last_message_time': row['last_ts'],
+                                'last_message_preview': (row['last_msg'] or '')[:100],
+                                'message_count': row['cnt']
+                            })
+
+                # Sort combined by last message time
+                conversations.sort(key=lambda x: x.get('last_message_time', 0), reverse=True)
+
+                return jsonify({'conversations': conversations[:limit]})
+
+            except Exception as e:
+                self.logger.error(f"Error listing conversations: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/conversations/messages')
+        def api_conversations_messages():
+            """Get messages for a specific conversation.
+            Query params: partner_id=X (for DM) OR channel=X, limit=50, before=timestamp"""
+            try:
+                partner_id = request.args.get('partner_id')
+                channel = request.args.get('channel')
+                limit = min(int(request.args.get('limit', 50)), 500)
+                before = request.args.get('before')
+
+                if not partner_id and not channel:
+                    return jsonify({'error': 'partner_id or channel required'}), 400
+
+                messages = []
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    if partner_id:
+                        # DM conversation
+                        params = [partner_id]
+                        query = '''
+                            SELECT id, sender_id, content, timestamp, hops, snr, rssi, path
+                            FROM message_stats
+                            WHERE sender_id = ? AND is_dm = 1
+                        '''
+                        if before:
+                            query += ' AND timestamp < ?'
+                            params.append(int(before))
+                        query += ' ORDER BY timestamp DESC LIMIT ?'
+                        params.append(limit + 1)
+                    else:
+                        # Channel conversation
+                        params = [channel]
+                        query = '''
+                            SELECT id, sender_id, content, timestamp, hops, snr, rssi, path
+                            FROM message_stats
+                            WHERE channel = ?
+                        '''
+                        if before:
+                            query += ' AND timestamp < ?'
+                            params.append(int(before))
+                        query += ' ORDER BY timestamp DESC LIMIT ?'
+                        params.append(limit + 1)
+
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+
+                    has_more = len(rows) > limit
+                    for row in list(rows)[:limit]:
+                        sender_id = row['sender_id'] or ''
+                        messages.append({
+                            'id': row['id'],
+                            'sender_id': sender_id,
+                            'sender_name': sender_id[:20] if sender_id else 'Unknown',
+                            'content': row['content'],
+                            'timestamp': row['timestamp'],
+                            'hops': row['hops'],
+                            'snr': row['snr'],
+                            'rssi': row['rssi'],
+                            'path': row['path']
+                        })
+
+                # Return in chronological order (oldest first)
+                messages.reverse()
+
+                return jsonify({
+                    'messages': messages,
+                    'has_more': has_more,
+                    'oldest_timestamp': messages[0]['timestamp'] if messages else None
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error getting conversation messages: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/conversations/search')
+        def api_conversations_search():
+            """Search messages across all conversations.
+            Query params: q=text, sender=name, type=all|dm|channel, limit=50"""
+            try:
+                query_text = request.args.get('q', '').strip()
+                sender_filter = request.args.get('sender', '').strip()
+                conv_type = request.args.get('type', 'all')
+                limit = min(int(request.args.get('limit', 50)), 200)
+
+                if not query_text and not sender_filter:
+                    return jsonify({'error': 'q or sender parameter required'}), 400
+
+                results = []
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    # Build query
+                    conditions = []
+                    params = []
+
+                    if query_text:
+                        conditions.append('content LIKE ?')
+                        params.append(f'%{query_text}%')
+
+                    if sender_filter:
+                        conditions.append('sender_id LIKE ?')
+                        params.append(f'%{sender_filter}%')
+
+                    if conv_type == 'dm':
+                        conditions.append('is_dm = 1')
+                    elif conv_type == 'channel':
+                        conditions.append('is_dm = 0')
+
+                    where_clause = ' AND '.join(conditions) if conditions else '1=1'
+
+                    cursor.execute(f'''
+                        SELECT id, sender_id, channel, content, timestamp, is_dm, hops, snr
+                        FROM message_stats
+                        WHERE {where_clause}
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    ''', params + [limit])
+
+                    for row in cursor.fetchall():
+                        sender_id = row['sender_id'] or ''
+                        results.append({
+                            'id': row['id'],
+                            'sender_id': sender_id,
+                            'sender_name': sender_id[:20] if sender_id else 'Unknown',
+                            'channel': row['channel'],
+                            'content': row['content'],
+                            'timestamp': row['timestamp'],
+                            'is_dm': bool(row['is_dm']),
+                            'hops': row['hops'],
+                            'snr': row['snr'],
+                            'context': {
+                                'type': 'dm' if row['is_dm'] else 'channel',
+                                'name': row['channel'] if row['channel'] else sender_id
+                            }
+                        })
+
+                return jsonify({'results': results, 'total': len(results)})
+
+            except Exception as e:
+                self.logger.error(f"Error searching conversations: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/conversations/export')
+        def api_conversations_export():
+            """Export conversation history.
+            Query params: partner_id=X OR channel=X, format=json|csv|txt"""
+            try:
+                import csv as csv_module
+                import io
+
+                partner_id = request.args.get('partner_id')
+                channel = request.args.get('channel')
+                export_format = request.args.get('format', 'json').lower()
+
+                if not partner_id and not channel:
+                    return jsonify({'error': 'partner_id or channel required'}), 400
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    if partner_id:
+                        cursor.execute('''
+                            SELECT sender_id, content, timestamp, hops, snr, path
+                            FROM message_stats
+                            WHERE sender_id = ? AND is_dm = 1
+                            ORDER BY timestamp ASC
+                        ''', (partner_id,))
+                        filename = f'conversation_dm_{partner_id[:20]}'
+                    else:
+                        cursor.execute('''
+                            SELECT sender_id, content, timestamp, hops, snr, path
+                            FROM message_stats
+                            WHERE channel = ?
+                            ORDER BY timestamp ASC
+                        ''', (channel,))
+                        filename = f'conversation_channel_{channel}'
+
+                    rows = [dict(row) for row in cursor.fetchall()]
+
+                if export_format == 'csv':
+                    buf = io.StringIO()
+                    if rows:
+                        writer = csv_module.DictWriter(buf, fieldnames=rows[0].keys())
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    return Response(
+                        buf.getvalue(),
+                        mimetype='text/csv',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.csv"'}
+                    )
+                elif export_format == 'txt':
+                    from datetime import datetime
+                    lines = []
+                    for row in rows:
+                        ts = datetime.fromtimestamp(row['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+                        lines.append(f"[{ts}] {row['sender_id']}: {row['content']}")
+                    return Response(
+                        '\n'.join(lines),
+                        mimetype='text/plain',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.txt"'}
+                    )
+                else:  # json
+                    return Response(
+                        json.dumps(rows, indent=2, default=str),
+                        mimetype='application/json',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.json"'}
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Error exporting conversation: {e}")
                 return jsonify({'error': str(e)}), 500
 
         # ── Export ──────────────────────────────────────────────────────────

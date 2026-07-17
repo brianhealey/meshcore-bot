@@ -1,0 +1,29 @@
+# Ralph Progress Log
+Started: Sat Jul 11 19:45:00 CDT 2026
+Project: MeshCore Bot - Path Prefix Bytes Settings
+Branch: ralph/path-prefix-settings
+
+## Codebase Patterns
+- Database migrations use sequential IDs (1, 2, 3...) not arbitrary numbers
+- Use tmp_path fixture for test databases (not :memory:)
+- Web viewer API routes follow pattern in modules/web_viewer/app.py
+- Async operations via bot.interface use operation queue pattern
+- Radio settings read/write follow existing channel/power operations as examples
+- Quality checks: mypy (typecheck), ruff (lint), pytest (tests with 35% coverage threshold)
+
+---
+
+## 2026-07-11 20:00 - US-001
+- Implemented GET /api/radio/path-mode endpoint for reading path hash mode from radio
+- Files changed:
+  - modules/web_viewer/app.py (added api_radio_path_mode_read endpoint at line ~3974)
+  - modules/scheduler.py (added 'path_mode_read' to operation types, handler case, and _path_mode_read_op method)
+- **Learnings for future iterations:**
+  - Radio operation pattern: Endpoint queues operation to channel_operations table, returns operation_id
+  - Scheduler (_process_radio_operations) polls pending operations and dispatches to handler methods
+  - Handler methods follow pattern: check meshcore connection, execute async command with timeout, return (success, result_dict)
+  - MeshCore get_path_hash_mode() returns int 0-2; prefix_bytes = path_hash_mode + 1
+  - Pre-existing test failures (23) on main branch are unrelated to radio/scheduler code
+  - Endpoint should return JSON with status field ('ok'|'error') for consistent error handling
+---
+
