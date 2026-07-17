@@ -188,6 +188,77 @@ class StatsCommand(BaseCommand):
         except Exception as e:
             self.logger.error(f"Error recording message stats: {e}")
 
+    def record_bot_response(
+        self,
+        recipient_id: str,
+        channel: str | None,
+        content: str,
+        is_dm: bool,
+    ) -> None:
+        """Record a bot outbound response in the stats database.
+
+        This allows conversation history to include both incoming messages
+        and the bot's responses.
+
+        Args:
+            recipient_id: The recipient's ID (user pubkey for DM, or channel name).
+            channel: The channel name if this is a channel message, None for DMs.
+            content: The response content.
+            is_dm: Whether this is a direct message.
+        """
+        if not self.collect_stats or not self.track_all_messages:
+            return
+
+        try:
+            # Get bot name for sender_id
+            bot_name = self._get_bot_sender_id()
+
+            with self.bot.db_manager.connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO message_stats
+                    (timestamp, sender_id, channel, content, is_dm, hops, snr, rssi, path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    int(time.time()),
+                    bot_name,
+                    channel,
+                    content,
+                    is_dm,
+                    0,  # hops - not applicable for outbound
+                    None,  # snr - not applicable for outbound
+                    None,  # rssi - not applicable for outbound
+                    None,  # path - not applicable for outbound
+                ))
+                conn.commit()
+        except Exception as e:
+            self.logger.error(f"Error recording bot response stats: {e}")
+
+    def _get_bot_sender_id(self) -> str:
+        """Get the bot's name/identifier for use as sender_id in message_stats.
+
+        Returns:
+            str: The bot's name from device or config.
+        """
+        # Try to get name from device first (actual radio username)
+        if hasattr(self.bot, 'meshcore') and self.bot.meshcore:
+            try:
+                if hasattr(self.bot.meshcore, 'self_info') and self.bot.meshcore.self_info:
+                    self_info = self.bot.meshcore.self_info
+                    if isinstance(self_info, dict):
+                        device_name = self_info.get('name') or self_info.get('adv_name')
+                        if device_name:
+                            return device_name
+                    elif hasattr(self_info, 'name') and self_info.name:
+                        return self_info.name
+                    elif hasattr(self_info, 'adv_name') and self_info.adv_name:
+                        return self_info.adv_name
+            except Exception:
+                pass
+
+        # Fallback to config
+        return self.bot.config.get('Bot', 'bot_name', fallback='Bot')
+
     def record_command(self, message: MeshMessage, command_name: str, response_sent: bool = True) -> None:
         """Record a command execution in the stats database.
 

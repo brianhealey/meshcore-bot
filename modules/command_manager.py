@@ -1551,7 +1551,7 @@ class CommandManager:
 
             rate_limit_key = self.get_rate_limit_key(message)
             if message.is_dm:
-                return await self.send_dm(
+                success = await self.send_dm(
                     message.sender_pubkey or message.sender_id or "",
                     content,
                     command_id,
@@ -1559,7 +1559,7 @@ class CommandManager:
                     rate_limit_key=rate_limit_key,
                 )
             else:
-                return await self.send_channel_message(
+                success = await self.send_channel_message(
                     message.channel or "",
                     content,
                     command_id,
@@ -1567,9 +1567,47 @@ class CommandManager:
                     rate_limit_key=rate_limit_key,
                     scope=getattr(message, 'reply_scope', None),
                 )
+
+            # Record bot response to message_stats for conversation history
+            if success:
+                self._record_bot_response(
+                    recipient_id=message.sender_id or message.sender_pubkey or "",
+                    channel=message.channel,
+                    content=content,
+                    is_dm=message.is_dm,
+                )
+
+            return success
         except Exception as e:
             self.logger.error(f"Failed to send response: {e}")
             return False
+
+    def _record_bot_response(
+        self,
+        recipient_id: str,
+        channel: str | None,
+        content: str,
+        is_dm: bool,
+    ) -> None:
+        """Record bot response to message_stats for conversation history.
+
+        Args:
+            recipient_id: The recipient's ID.
+            channel: The channel name if this is a channel message.
+            content: The response content.
+            is_dm: Whether this is a direct message.
+        """
+        try:
+            stats_command = self.commands.get('stats')
+            if stats_command and hasattr(stats_command, 'record_bot_response'):
+                stats_command.record_bot_response(
+                    recipient_id=recipient_id,
+                    channel=channel,
+                    content=content,
+                    is_dm=is_dm,
+                )
+        except Exception as e:
+            self.logger.debug(f"Failed to record bot response stats: {e}")
 
     @staticmethod
     def split_text_into_chunks(text: str, max_len: int) -> list[str]:
