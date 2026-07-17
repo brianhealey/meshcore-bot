@@ -224,6 +224,12 @@ class PacketCaptureService(BaseServicePlugin):
             "PacketCapture", "advert_require_valid_signature", fallback=False
         )
 
+        # Crypto sample capture for channel key discovery research
+        # Stores encrypted GRP_TXT packets for offline cryptographic analysis
+        self.capture_crypto_samples = config.getboolean(
+            "PacketCapture", "capture_crypto_samples", fallback=False
+        )
+
         # Note: Python signing can fetch private key from device if not provided via file
         # The create_auth_token_async function will automatically try to export the key
         # from the device if private_key_hex is None and meshcore_instance is available
@@ -928,6 +934,10 @@ class PacketCaptureService(BaseServicePlugin):
                 self.logger.debug("📋 Full packet data structure:")
                 self.logger.debug(json.dumps(formatted_packet, indent=2))
 
+            # Capture crypto samples for channel key discovery research
+            if self.capture_crypto_samples:
+                await self._store_crypto_sample(packet_info, formatted_packet, payload)
+
         except Exception as e:
             self.logger.error(f"Error processing packet: {e}")
 
@@ -1060,6 +1070,89 @@ class PacketCaptureService(BaseServicePlugin):
             if self.debug:
                 self.logger.debug(f"Decode error traceback: {traceback.format_exc()}")
             return None
+
+    async def _store_crypto_sample(
+        self,
+        packet_info: dict[str, Any],
+        formatted_packet: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        """Store encrypted channel message (GRP_TXT) for channel key discovery research.
+
+        Captures packets that may be from unknown channels for offline cryptographic
+        analysis and key discovery using GPU-accelerated tools.
+
+        GRP_TXT payload format: [channel_hash(1 byte)] [cipher_mac(2 bytes)] [ciphertext(N bytes)]
+
+        Args:
+            packet_info: Decoded packet information from decode_packet().
+            formatted_packet: Formatted packet data for MQTT.
+            payload: Original event payload with RF data.
+        """
+        try:
+            # Only capture GRP_TXT (channel text) packets
+            payload_type = packet_info.get("payload_type")
+            if payload_type != PayloadType.GRP_TXT.name:
+                return
+
+            # Get payload hex
+            payload_hex = packet_info.get("payload_hex", "")
+            if len(payload_hex) < 6:  # Need at least channel_hash(2) + mac(4)
+                return
+
+            # Extract channel hash (first byte = 2 hex chars)
+            channel_hash = payload_hex[:2].upper()
+
+            # Get packet hash for deduplication
+            packet_hash = packet_info.get("packet_hash", "")
+            if not packet_hash or packet_hash == "0000000000000000":
+                return  # Skip unparseable packets
+
+            # Extract RF metadata
+            snr = payload.get("snr")
+            rssi = payload.get("rssi")
+
+            # Get path info
+            path_hex = packet_info.get("path_hex", "")
+            path_nodes = ",".join(packet_info.get("path", []))
+            route_type = packet_info.get("route_type", "")
+            raw_hex = packet_info.get("raw_hex", "")
+
+            # Store in database
+            if hasattr(self.bot, "db_manager") and self.bot.db_manager:
+                with self.bot.db_manager.connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO crypto_samples
+                        (timestamp, channel_hash, payload_hex, raw_packet_hex, route_type,
+                         path_hex, path_nodes, snr, rssi, packet_hash, payload_len)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            time.time(),
+                            channel_hash,
+                            payload_hex,
+                            raw_hex,
+                            route_type,
+                            path_hex,
+                            path_nodes,
+                            snr,
+                            rssi,
+                            packet_hash,
+                            len(payload_hex) // 2,
+                        ),
+                    )
+                    conn.commit()
+
+                    if cursor.rowcount > 0:
+                        self.logger.debug(
+                            f"🔐 Stored crypto sample: channel_hash={channel_hash}, "
+                            f"payload_len={len(payload_hex) // 2} bytes"
+                        )
+
+        except Exception as e:
+            self.logger.debug(f"Error storing crypto sample: {e}")
 
     def _get_bot_name(self) -> str:
         """Get bot name from device or config.

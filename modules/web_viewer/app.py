@@ -3027,6 +3027,153 @@ class BotDataViewer:
                 self.logger.error(f"Error exporting conversation: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        # ── Crypto Samples for Channel Discovery ────────────────────────────
+
+        @self.app.route('/api/crypto/samples')
+        def api_crypto_samples():
+            """Get crypto samples for channel key discovery research.
+            Query params: channel_hash=XX, limit=1000, since=hours"""
+            try:
+                channel_hash = request.args.get('channel_hash', '').upper()
+                limit = min(int(request.args.get('limit', 1000)), 10000)
+                since_hours = int(request.args.get('since', 168))  # 7 days default
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    # Check if table exists
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='crypto_samples'"
+                    )
+                    if not cursor.fetchone():
+                        return jsonify({
+                            'samples': [],
+                            'total': 0,
+                            'message': 'crypto_samples table not found - enable capture_crypto_samples in PacketCapture config'
+                        })
+
+                    # Build query
+                    import time
+                    since_ts = time.time() - (since_hours * 3600)
+
+                    if channel_hash:
+                        cursor.execute('''
+                            SELECT * FROM crypto_samples
+                            WHERE channel_hash = ? AND timestamp >= ?
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        ''', (channel_hash, since_ts, limit))
+                    else:
+                        cursor.execute('''
+                            SELECT * FROM crypto_samples
+                            WHERE timestamp >= ?
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        ''', (since_ts, limit))
+
+                    samples = [dict(row) for row in cursor.fetchall()]
+
+                    # Get unique channel hashes for summary
+                    cursor.execute('''
+                        SELECT channel_hash, COUNT(*) as count
+                        FROM crypto_samples
+                        WHERE timestamp >= ?
+                        GROUP BY channel_hash
+                        ORDER BY count DESC
+                    ''', (since_ts,))
+                    channel_summary = [dict(row) for row in cursor.fetchall()]
+
+                return jsonify({
+                    'samples': samples,
+                    'total': len(samples),
+                    'channel_summary': channel_summary
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error fetching crypto samples: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/crypto/export')
+        def api_crypto_export():
+            """Export crypto samples for GPU cracking tools.
+            Query params: format=json|hashcat|raw, channel_hash=XX, since=hours"""
+            try:
+                import time
+
+                export_format = request.args.get('format', 'json').lower()
+                channel_hash = request.args.get('channel_hash', '').upper()
+                since_hours = int(request.args.get('since', 168))  # 7 days default
+                since_ts = time.time() - (since_hours * 3600)
+
+                with closing(sqlite3.connect(self.db_path, timeout=60)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    # Check if table exists
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='crypto_samples'"
+                    )
+                    if not cursor.fetchone():
+                        return jsonify({'error': 'crypto_samples table not found'}), 404
+
+                    if channel_hash:
+                        cursor.execute('''
+                            SELECT * FROM crypto_samples
+                            WHERE channel_hash = ? AND timestamp >= ?
+                            ORDER BY timestamp ASC
+                        ''', (channel_hash, since_ts))
+                        filename = f'crypto_samples_{channel_hash}'
+                    else:
+                        cursor.execute('''
+                            SELECT * FROM crypto_samples
+                            WHERE timestamp >= ?
+                            ORDER BY timestamp ASC
+                        ''', (since_ts,))
+                        filename = 'crypto_samples_all'
+
+                    rows = [dict(row) for row in cursor.fetchall()]
+
+                if export_format == 'hashcat':
+                    # Export in format suitable for hashcat/john cracking tools
+                    # Format: channel_hash:cipher_mac:ciphertext_hex
+                    lines = []
+                    for row in rows:
+                        payload = row['payload_hex']
+                        if len(payload) >= 6:
+                            ch_hash = payload[:2]
+                            cipher_mac = payload[2:6]
+                            ciphertext = payload[6:]
+                            lines.append(f"{ch_hash}:{cipher_mac}:{ciphertext}")
+                    return Response(
+                        '\n'.join(lines),
+                        mimetype='text/plain',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.txt"'}
+                    )
+                elif export_format == 'raw':
+                    # Export just the raw encrypted payloads (one per line)
+                    lines = [row['payload_hex'] for row in rows]
+                    return Response(
+                        '\n'.join(lines),
+                        mimetype='text/plain',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}_raw.txt"'}
+                    )
+                else:  # json - includes all metadata
+                    return Response(
+                        json.dumps({
+                            'samples': rows,
+                            'total': len(rows),
+                            'export_time': time.time(),
+                            'note': 'GRP_TXT format: payload_hex = channel_hash(2) + cipher_mac(4) + ciphertext(N)'
+                        }, indent=2, default=str),
+                        mimetype='application/json',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.json"'}
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Error exporting crypto samples: {e}")
+                return jsonify({'error': str(e)}), 500
+
         # ── Export ──────────────────────────────────────────────────────────
 
         @self.app.route('/api/export/contacts')

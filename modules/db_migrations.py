@@ -537,6 +537,41 @@ def _m0015_repeater_adverts_table(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _m0016_crypto_samples_table(cursor: sqlite3.Cursor) -> None:
+    """Create crypto_samples table for channel key discovery research.
+
+    Captures encrypted channel messages (GRP_TXT packets) with metadata
+    needed for offline cryptographic analysis and key discovery.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp REAL NOT NULL,
+            channel_hash TEXT NOT NULL,
+            payload_hex TEXT NOT NULL,
+            raw_packet_hex TEXT NOT NULL,
+            route_type TEXT,
+            path_hex TEXT,
+            path_nodes TEXT,
+            snr REAL,
+            rssi REAL,
+            packet_hash TEXT,
+            payload_len INTEGER,
+            UNIQUE(packet_hash)
+        )
+    """)
+    # Index on channel_hash for filtering by unknown channel
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_crypto_samples_channel_hash "
+        "ON crypto_samples(channel_hash)"
+    )
+    # Index on timestamp for time-based queries
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_crypto_samples_timestamp "
+        "ON crypto_samples(timestamp)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Migration registry — append new entries here, never remove or reorder.
 # ---------------------------------------------------------------------------
@@ -559,6 +594,7 @@ MIGRATIONS: list[MigrationEntry] = [
     (13, "llm_conversation_context table", _m0013_llm_conversation_context),
     (14, "llm_conversation_context: command_name, sender_name", _m0014_extend_llm_context_for_commands),
     (15, "repeater_adverts table for connectivity metrics", _m0015_repeater_adverts_table),
+    (16, "crypto_samples table for channel discovery", _m0016_crypto_samples_table),
 ]
 
 
